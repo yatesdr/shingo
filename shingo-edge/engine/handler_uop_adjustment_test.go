@@ -372,13 +372,12 @@ func TestHandleUOPAdjustment_BoundSetsActiveBin(t *testing.T) {
 	}, EventUOPAdjusted)
 
 	binID := int64(77)
-	eng.HandleUOPAdjustment(protocol.UOPAdjustment{
+	eng.HandleBinLanded(protocol.BinLanded{
 		BinID:        binID,
 		CoreNodeName: "ALN_004",
-		NewRemaining: 640,
+		Count:        640,
 		Epoch:        9,
-		Bound:        true,
-		Actor:        "admin",
+		PlacedSeq:    testPlacedSeq.Add(1),
 	})
 
 	rt, err := db.GetProcessNodeRuntime(nodeID)
@@ -426,13 +425,12 @@ func TestHandleUOPAdjustment_BoundOverwritesStaleBin(t *testing.T) {
 
 	eng := testEngine(t, db)
 	movedBinID := int64(22)
-	eng.HandleUOPAdjustment(protocol.UOPAdjustment{
+	eng.HandleBinLanded(protocol.BinLanded{
 		BinID:        movedBinID,
 		CoreNodeName: "ALN_005",
-		NewRemaining: 480,
+		Count:        480,
 		Epoch:        3,
-		Bound:        true,
-		Actor:        "admin",
+		PlacedSeq:    testPlacedSeq.Add(1),
 	})
 
 	rt, err := db.GetProcessNodeRuntime(nodeID)

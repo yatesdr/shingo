@@ -28,9 +28,13 @@ import (
 // order.delivered is sent after the commit, outside the move's tx).
 //
 // H.7 sends the landing only to a station registered at or above
-// protocol.EdgeSchemaBinLanded, so the fixtures register the claiming station
+// edgeSchema, so the fixtures register the claiming station
 // at that schema (registerEdgeSchema); an unregistered station is an old Edge
 // and gets today's wire (TestPinH7_*).
+
+// The schemas the fixtures register: the floor's (v0.19.0), and one below
+// where a v0.19.0 Core sent landings. Nothing in this Core reads either.
+const edgeSchema, belowLandingSchema = 59, 19
 
 // registerEdgeSchema records station in edge_registry at schema version v, as
 // its register message would (edge_registry.schema_version, v137).
@@ -89,7 +93,7 @@ func TestPinH2_AFinalDropAtAClaimedSeatEnqueuesOneLandingToTheClaimingStation(t 
 		[]plantclaims.ClaimRow{{ProcessID: "proc-h2", StyleID: "style-h2", CoreNodeName: sd.LineNode.Name,
 			Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSimple, PayloadCode: "PART-A", UOPCapacity: 100}}, nil, 0)
 	testutil.MustNoErr(t, err, "mirror: the station claims the line seat")
-	registerEdgeSchema(t, db, station, protocol.EdgeSchemaBinLanded)
+	registerEdgeSchema(t, db, station, edgeSchema)
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-H2-SEAT", "PART-A", 80)
 	order := createTestOrder(t, db, sd.LineNode.ID)
@@ -157,7 +161,7 @@ func TestPinH2_TwoArrivalsGetIncreasingPlacementStamps(t *testing.T) {
 		[]plantclaims.ClaimRow{{ProcessID: "proc-h2b", StyleID: "s", CoreNodeName: sd.LineNode.Name,
 			Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSimple, PayloadCode: "PART-A"}}, nil, 0)
 	testutil.MustNoErr(t, err, "mirror")
-	registerEdgeSchema(t, db, "edge-h2b.line", protocol.EdgeSchemaBinLanded)
+	registerEdgeSchema(t, db, "edge-h2b.line", edgeSchema)
 
 	var seqs []int64
 	for _, label := range []string{"BIN-H2-SEQ-1", "BIN-H2-SEQ-2"} {
@@ -179,37 +183,11 @@ func TestPinH2_TwoArrivalsGetIncreasingPlacementStamps(t *testing.T) {
 	}
 }
 
-// boundsFor returns the destination station of every Bound UOPAdjustment
-// queued for the bin.
-func boundsFor(t *testing.T, db *store.DB, binID int64) []string {
-	t.Helper()
-	rows, err := db.Query(`SELECT payload FROM outbox WHERE msg_type=$1 ORDER BY id`,
-		"data."+protocol.SubjectUOPAdjustment)
-	testutil.MustNoErr(t, err, "read outbox")
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var raw []byte
-		testutil.MustNoErr(t, rows.Scan(&raw), "scan")
-		var env protocol.Envelope
-		testutil.MustNoErr(t, json.Unmarshal(raw, &env), "decode envelope")
-		var data protocol.Data
-		testutil.MustNoErr(t, env.DecodePayload(&data), "decode data")
-		var a protocol.UOPAdjustment
-		testutil.MustNoErr(t, json.Unmarshal(data.Body, &a), "decode adjustment")
-		if a.BinID == binID && a.Bound {
-			out = append(out, env.Dst.Station)
-		}
-	}
-	return out
-}
-
-// TestPinH7_AnOldEdgeGetsTodaysWireAddressed — H.7, new Core with an old Edge
-// (schema below protocol.EdgeSchemaBinLanded, or never reported): no landing,
-// which it could not bind. A mid-order set-down gets the Bound it always got,
-// addressed to the claiming station instead of broadcast; a final drop gets
-// nothing new (its carrier still rides order.delivered's bind fields).
-func TestPinH7_AnOldEdgeGetsTodaysWireAddressed(t *testing.T) {
+// TestPinH3_TheRegisteredSchemaDoesNotDecideTheLanding: the station a landing
+// is addressed to gets the landing whatever schema it last registered (a
+// register that could not read its own reports none), for a mid-order
+// set-down and a final drop alike.
+func TestPinH3_TheRegisteredSchemaDoesNotDecideTheLanding(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
@@ -222,7 +200,7 @@ func TestPinH7_AnOldEdgeGetsTodaysWireAddressed(t *testing.T) {
 		[]plantclaims.ClaimRow{{ProcessID: "proc-h7", StyleID: "s", CoreNodeName: sd.LineNode.Name,
 			Role: protocol.ClaimRoleConsume, SwapMode: protocol.SwapModeSimple, PayloadCode: "PART-A"}}, nil, 0)
 	testutil.MustNoErr(t, err, "mirror")
-	registerEdgeSchema(t, db, station, protocol.EdgeSchemaBinLanded-1)
+	registerEdgeSchema(t, db, station, belowLandingSchema)
 
 	// A mid-order set-down at the seat.
 	mid := createTestBin(t, db, sd.StorageNode.ID, "BIN-H7-MID", "PART-A", 30)
@@ -231,11 +209,8 @@ func TestPinH7_AnOldEdgeGetsTodaysWireAddressed(t *testing.T) {
 	testutil.MustNoErr(t, binSvc.MoveToTransit(mid.ID), "lift")
 	_, err = binSvc.ApplyIntermediateStore(mid.ID, sd.LineNode.ID, true, nil, midOrder.ID)
 	testutil.MustNoErr(t, err, "set-down")
-	if got := landingsFor(t, db, mid.ID); len(got) != 0 {
-		t.Errorf("landings to an old Edge = %d, want 0", len(got))
-	}
-	if got := boundsFor(t, db, mid.ID); len(got) != 1 || got[0] != station {
-		t.Errorf("Bounds = %v, want exactly one, to %q (addressed, not broadcast)", got, station)
+	if got := landingsFor(t, db, mid.ID); len(got) != 1 || got[0].Dst != station {
+		t.Errorf("landings = %v, want exactly one, to %q (addressed, not broadcast)", got, station)
 	}
 
 	// The seat cleared; a final drop there.
@@ -246,11 +221,8 @@ func TestPinH7_AnOldEdgeGetsTodaysWireAddressed(t *testing.T) {
 	testutil.MustNoErr(t, binSvc.MoveToTransit(final.ID), "lift")
 	_, err = binSvc.ApplyArrival(final.ID, sd.LineNode.ID, true, nil, finalOrder.ID)
 	testutil.MustNoErr(t, err, "final drop")
-	if got := landingsFor(t, db, final.ID); len(got) != 0 {
-		t.Errorf("landings to an old Edge = %d, want 0", len(got))
-	}
-	if got := boundsFor(t, db, final.ID); len(got) != 0 {
-		t.Errorf("Bounds on a final drop = %v, want none (today's wire is order.delivered)", got)
+	if got := landingsFor(t, db, final.ID); len(got) != 1 || got[0].Dst != station {
+		t.Errorf("landings = %v, want exactly one, to %q (addressed, not broadcast)", got, station)
 	}
 }
 
@@ -281,7 +253,7 @@ func TestPinD19_AnAdminMoveOntoAnUnclaimedSeatReachesThePlantsOnlyEdge(t *testin
 	sd := testdb.SetupStandardData(t, db)
 	binSvc := NewBinService(db, announcingService(db))
 	const edge = "edge-d19a.line"
-	registerEdgeSchema(t, db, edge, protocol.EdgeSchemaBinLanded)
+	registerEdgeSchema(t, db, edge, edgeSchema)
 	seat := unclaimedSeat(t, db, "LDR-D19A-SEAT")
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-D19A", "PART-A", 60)
@@ -314,7 +286,7 @@ func TestMoveByHand_TellsTheNodeItLeftWithTheMovesStamp(t *testing.T) {
 	testdb.SetupStandardData(t, db)
 	binSvc := NewBinService(db, announcingService(db))
 	const edge = "edge-rl.line"
-	registerEdgeSchema(t, db, edge, protocol.EdgeSchemaBinLanded)
+	registerEdgeSchema(t, db, edge, edgeSchema)
 	seatA, seatB := ownedSeat(t, db, "SEAT-RL-A", edge), ownedSeat(t, db, "SEAT-RL-B", edge)
 	bin := createTestBin(t, db, seatA.ID, "BIN-RL", "PART-A", 60)
 
@@ -367,7 +339,7 @@ func TestMoveByHand_AReleasedThatCannotBeWrittenRefusesTheMove(t *testing.T) {
 	testdb.SetupStandardData(t, db)
 	binSvc := NewBinService(db, announcingService(db))
 	const edge = "edge-rf.line"
-	registerEdgeSchema(t, db, edge, protocol.EdgeSchemaBinLanded)
+	registerEdgeSchema(t, db, edge, edgeSchema)
 	seatA, seatB := ownedSeat(t, db, "SEAT-RF-A", edge), ownedSeat(t, db, "SEAT-RF-B", edge)
 	bin := createTestBin(t, db, seatA.ID, "BIN-RF", "PART-A", 60)
 	_, err := db.Exec(`CREATE FUNCTION refuse_adjustments() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -399,7 +371,7 @@ func TestPinD19_AnAdminMoveOntoAnUnclaimedSeatReachesEveryEdge(t *testing.T) {
 	binSvc := NewBinService(db, announcingService(db))
 	edges := []string{"edge-d19b.line1", "edge-d19b.line2"}
 	for _, e := range edges {
-		registerEdgeSchema(t, db, e, protocol.EdgeSchemaBinLanded)
+		registerEdgeSchema(t, db, e, edgeSchema)
 	}
 	seat := unclaimedSeat(t, db, "FG-D19B-SEAT")
 
@@ -416,28 +388,29 @@ func TestPinD19_AnAdminMoveOntoAnUnclaimedSeatReachesEveryEdge(t *testing.T) {
 	}
 }
 
-// TestPinD19_AnOldEdgeAmongSeveralGetsItsBoundAddressed — the per-Edge
-// version rule holds on the last arm: the new Edge gets the landing, the old
-// one the Bound the admin move always sent it, addressed.
-func TestPinD19_AnOldEdgeAmongSeveralGetsItsBoundAddressed(t *testing.T) {
+// TestPinD19_EveryEdgeOnTheLastArmGetsTheLanding: on the last arm every Edge
+// is sent the landing, addressed, whatever schema it last registered.
+func TestPinD19_EveryEdgeOnTheLastArmGetsTheLanding(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	binSvc := NewBinService(db, announcingService(db))
 	const newEdge, oldEdge = "edge-d19c.new", "edge-d19c.old"
-	registerEdgeSchema(t, db, newEdge, protocol.EdgeSchemaBinLanded)
-	registerEdgeSchema(t, db, oldEdge, protocol.EdgeSchemaBinLanded-1)
+	registerEdgeSchema(t, db, newEdge, edgeSchema)
+	registerEdgeSchema(t, db, oldEdge, belowLandingSchema)
 	seat := unclaimedSeat(t, db, "LDR-D19C-SEAT")
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-D19C", "PART-A", 60)
 	_, err := binSvc.MoveByHand(bin, seat.ID)
 	testutil.MustNoErr(t, err, "the admin move")
 
-	if got := landingsFor(t, db, bin.ID); len(got) != 1 || got[0].Dst != newEdge {
-		t.Errorf("landings = %v, want one, to %q", got, newEdge)
+	got := landingsFor(t, db, bin.ID)
+	to := map[string]int{}
+	for _, l := range got {
+		to[l.Dst]++
 	}
-	if got := boundsFor(t, db, bin.ID); len(got) != 1 || got[0] != oldEdge {
-		t.Errorf("Bounds = %v, want one, to %q", got, oldEdge)
+	if len(got) != 2 || to[newEdge] != 1 || to[oldEdge] != 1 {
+		t.Errorf("landings = %v, want one to %q and one to %q", got, newEdge, oldEdge)
 	}
 }
 
@@ -448,8 +421,8 @@ func TestPinD19_AnAdminMoveOntoStorageStillReachesNobody(t *testing.T) {
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	binSvc := NewBinService(db, announcingService(db))
-	registerEdgeSchema(t, db, "edge-d19d.line", protocol.EdgeSchemaBinLanded)
-	registerEdgeSchema(t, db, "edge-d19d.old", protocol.EdgeSchemaBinLanded-1)
+	registerEdgeSchema(t, db, "edge-d19d.line", edgeSchema)
+	registerEdgeSchema(t, db, "edge-d19d.old", belowLandingSchema)
 
 	bin := createTestBin(t, db, sd.LineNode.ID, "BIN-D19D", "PART-A", 60)
 	_, err := binSvc.MoveByHand(bin, sd.StorageNode.ID)
@@ -457,9 +430,6 @@ func TestPinD19_AnAdminMoveOntoStorageStillReachesNobody(t *testing.T) {
 
 	if got := landingsFor(t, db, bin.ID); len(got) != 0 {
 		t.Errorf("landings at a storage slot = %d, want 0", len(got))
-	}
-	if got := boundsFor(t, db, bin.ID); len(got) != 0 {
-		t.Errorf("Bounds at a storage slot = %v, want none", got)
 	}
 }
 

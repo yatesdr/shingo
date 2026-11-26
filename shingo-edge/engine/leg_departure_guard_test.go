@@ -245,12 +245,12 @@ func TestSingleRobotWindow_StaysRefusedAt8WithoutThePlacement(t *testing.T) {
 // also where settleCellPlacement is wired.
 func bindPlacement(t *testing.T, eng *Engine, coreNodeName string) {
 	t.Helper()
-	eng.HandleUOPAdjustment(protocol.UOPAdjustment{
+	eng.HandleBinLanded(protocol.BinLanded{
 		BinID:        placedBinID,
 		CoreNodeName: coreNodeName,
-		NewRemaining: 40,
+		Count:        40,
 		Epoch:        1,
-		Bound:        true,
+		PlacedSeq:    testPlacedSeq.Add(1),
 	})
 }
 

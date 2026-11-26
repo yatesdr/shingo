@@ -6,6 +6,7 @@ import (
 	"log"
 	"shingocore/store/reservations"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"shingo/protocol"
@@ -23,8 +24,8 @@ import (
 )
 
 // Scanner monitors queued orders and fulfills them when matching
-// inventory becomes available. Runs event-driven with a periodic
-// safety sweep.
+// inventory becomes available. One worker runs the passes, one at a time,
+// when triggered: by events, and by a periodic safety timer.
 //
 // Construct via NewScanner. The zero value is not usable.
 //
@@ -51,26 +52,41 @@ type Scanner struct {
 	debugLog func(string, ...any)
 
 	scanMu lockcheck.Mutex[lockorder.Scan] // serializes scan() calls
-	// askedThisPass is the orders this RunOnce has asked and not dispatched,
-	// guarded by scanMu; nil outside a RunOnce (AcquireOne asks once anyway).
-	askedThisPass map[int64]bool
-	// pushRefusedThisPass is the (group, type) resolves this RunOnce found no slot in,
-	// shared by every window's push it asks (plan.PushRefusals); nil outside a RunOnce.
+	// pushRefusedThisPass is the (group, type) resolves this pass found no slot in,
+	// shared by every window's push it asks (plan.PushRefusals); nil outside a pass.
 	pushRefusedThisPass plan.PushRefusals
-	// overflowRefusedThisPass is the (group, type)s whose overflow this RunOnce has asked
+	// overflowRefusedThisPass is the (group, type)s whose overflow this pass has asked
 	// for an order parked on their room and been refused, or that name none
-	// (overflowsWhileParked), guarded by scanMu; nil outside a RunOnce. Every
+	// (overflowsWhileParked), guarded by scanMu; nil outside a pass. Every
 	// other order parked on the same group shares the answer.
 	overflowRefusedThisPass map[overflowAsk]bool
 
-	triggerMu lockcheck.Mutex[lockorder.ScanTrigger]
-	pending   bool // coalesce triggers during a scan
-	stopChan  chan struct{}
-	stopOnce  sync.Once
-	// sweeps tracks the periodic sweep's goroutine, so Stop returns only once
-	// a pass it started has finished (TestPeriodicSweep_StopWaitsForAPassInFlight).
-	sweeps sync.WaitGroup
+	// wake is the one slot a trigger fills and the worker (runPasses) empties.
+	wake     chan struct{}
+	stopChan chan struct{}
+	stopOnce sync.Once
+	started  atomic.Bool
+	stopWait time.Duration // StopJoinLimit, shorter in a test
+
+	// What the freeze alarm reads of the worker (WorkerStopped, RunningLong):
+	// monotonic nanoseconds since born, wall time whatever the sim's clock. Each
+	// mark is an atomic, so the watch takes no lock the worker could hold.
+	born         time.Time
+	interval     atomic.Int64 // the safety timer's, on the wall; 0 until started
+	askedAt      atomic.Int64 // the first trigger no pass start has answered; 0 none
+	lockWait     atomic.Bool  // the worker is waiting for the scan lock, and nothing else
+	runningSince atomic.Int64 // the worker's pass running now; 0 none
+
+	// What Stop joins: each is set before its goroutine starts and closed when
+	// that ends, and is nil when it never started.
+	workerDone, timerDone, bootDone chan struct{}
 }
+
+// StopJoinLimit bounds how long a stop waits for work in hand: just past the
+// fleet client's default timeout (config.Defaults' rds.timeout, 10 s), so one
+// fleet call in hand can finish and a hung one cannot hang the shutdown
+// (TestScanner_StopGivesUpAtItsBound).
+const StopJoinLimit = 12 * time.Second
 
 // NewScanner constructs a Scanner wired to the provided dependencies.
 // See package doc for the role of each argument.
@@ -99,56 +115,103 @@ func NewScanner(
 		failFn:     failFn,
 		logFn:      logFn,
 		debugLog:   debugLog,
+		wake:       make(chan struct{}, 1),
 		stopChan:   make(chan struct{}),
+		stopWait:   StopJoinLimit,
+		born:       time.Now(),
 	}
 }
 
-// Trigger requests a scan. If a scan is already running, the request
-// is coalesced — the scanner will re-run after the current scan finishes.
-func (s *Scanner) Trigger() {
-	s.triggerMu.Lock()
-	s.pending = true
-	s.triggerMu.Unlock()
+// mono is t on the worker marks' scale: never 0, which says "none".
+func (s *Scanner) mono(t time.Time) int64 { return int64(t.Sub(s.born)) + 1 }
+
+// WorkerStopped is how long a trigger has gone with no pass started by a
+// worker that is neither running one nor waiting for the scan lock: a worker
+// dead, or wedged outside the lock, while the lock still turns over. 0 until
+// that is the timer's interval on the wall: the timer triggers every interval,
+// so a live worker has started a pass within it. A worker that waits for the
+// lock is not stopped; the probe on the lock names who holds that up.
+func (s *Scanner) WorkerStopped(now time.Time) time.Duration {
+	// The worker's marks are read before askedAt: a pass that ends moves
+	// askedAt to its end before it clears them (passEnded).
+	if s.lockWait.Load() || s.runningSince.Load() != 0 || s.stopping() {
+		return 0
+	}
+	return s.pastInterval(now, s.askedAt.Load())
 }
 
-// RunOnce executes a single scan pass. Only one scan runs at a time.
+// RunningLong is how long the worker's pass running now has run, 0 until that
+// is past the interval. It and WorkerStopped are never both true of one state.
+func (s *Scanner) RunningLong(now time.Time) time.Duration {
+	return s.pastInterval(now, s.runningSince.Load())
+}
+
+// pastInterval is the time since the mark once it is past the interval, else 0.
+func (s *Scanner) pastInterval(now time.Time, mark int64) time.Duration {
+	interval := time.Duration(s.interval.Load())
+	if mark == 0 || interval == 0 {
+		return 0
+	}
+	if d := time.Duration(s.mono(now) - mark); d >= interval {
+		return d
+	}
+	return 0
+}
+
+// Trigger asks the worker for a pass that starts after this call. It fills the
+// one slot and returns: it takes no lock and never waits, so it may be called
+// under any lock. A trigger that finds the slot full is answered by the pass
+// already waiting in it, which has not started, so N triggers during a pass
+// make one more pass (TestScanWorker_NTriggersDuringAPassMakeOneMorePass) and
+// none is lost (TestScanner_ATriggerAfterTheLastScanBeganIsNeverLost).
+func (s *Scanner) Trigger() {
+	// Marked before the send: the pass that answers the send clears the mark
+	// when it starts, and could start before a mark made after it.
+	if s.askedAt.Load() == 0 {
+		s.askedAt.CompareAndSwap(0, s.mono(time.Now()))
+	}
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+}
+
+// RunOnce executes a single scan pass on the caller's goroutine: the boot scan
+// and tests. Only one scan runs at a time.
 func (s *Scanner) RunOnce() int {
 	s.scanMu.Lock()
 	defer s.scanMu.Unlock()
-
-	s.triggerMu.Lock()
-	s.pending = false
-	s.triggerMu.Unlock()
-
-	// AN ORDER IS ASKED ONCE PER PASS. A pass triggered while it scanned scans
-	// again (below), and an order it has just asked and parked was asked again
-	// there and paid its whole acquisition again for a state that had not moved
-	// for it: the order-22 shape, a pair re-parked 43 times in 3 s under one
-	// cause. Every trigger also starts a fresh pass of its own
-	// (engine.triggerFulfillment), so nothing waits on this rerun to see it.
-	s.askedThisPass = map[int64]bool{}
-	s.overflowRefusedThisPass = map[overflowAsk]bool{}
-	s.pushRefusedThisPass = plan.PushRefusals{}
-	defer func() { s.askedThisPass, s.overflowRefusedThisPass, s.pushRefusedThisPass = nil, nil, nil }()
-
-	fulfilled := s.scan()
-
-	// If events arrived during the scan, run again
-	s.triggerMu.Lock()
-	again := s.pending
-	s.pending = false
-	s.triggerMu.Unlock()
-	if again {
-		fulfilled += s.scan()
-	}
-	return fulfilled
+	return s.passLocked(false)
 }
 
-// StartPeriodicSweep runs the scanner every interval as a safety net.
+// passLocked is one pass, the scan lock held: one scan, with that pass's
+// memory. AN ORDER IS ASKED ONCE PER PASS, because a pass scans once and the
+// waiting set lists an order once; what moved during it is the next pass's
+// (the order-22 shape, a pair re-parked 43 times in 3 s under one cause, was a
+// pass asking again. TestScanner_AnOrderIsAskedOncePerPassAndAgainByTheTriggeredOne).
+//
+// untilStop is the worker's and the boot scan's: their pass ends at the next
+// order boundary once Stop is called.
+func (s *Scanner) passLocked(untilStop bool) int {
+	s.overflowRefusedThisPass = map[overflowAsk]bool{}
+	s.pushRefusedThisPass = plan.PushRefusals{}
+	defer func() { s.overflowRefusedThisPass, s.pushRefusedThisPass = nil, nil }()
+	return s.scan(untilStop)
+}
+
+// StartPeriodicSweep starts the pass worker and the timer that triggers it
+// every interval, as a safety net. The timer runs no pass itself. Nothing
+// recovers a panic in a pass: it kills the process
+// (TestScanWorker_APanicInAPassKillsTheProcess).
 func (s *Scanner) StartPeriodicSweep(interval time.Duration) {
-	s.sweeps.Add(1)
+	if s.stopping() || !s.started.CompareAndSwap(false, true) {
+		return
+	}
+	s.interval.Store(int64(interval))
+	s.workerDone, s.timerDone = make(chan struct{}), make(chan struct{})
+	go s.runPasses()
 	go func() {
-		defer s.sweeps.Done()
+		defer close(s.timerDone)
 		ticker := clock.Default().NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -156,18 +219,107 @@ func (s *Scanner) StartPeriodicSweep(interval time.Duration) {
 			case <-s.stopChan:
 				return
 			case <-ticker.C():
-				s.RunOnce()
+				s.Trigger()
 			}
 		}
 	}()
 }
 
-// Stop halts the periodic sweep and waits for a pass it had started: that pass
-// would otherwise read a database the caller is about to close, and log
-// through a logger whose owner may be gone. Safe to call twice (Engine.Stop is).
+// runPasses is the one goroutine that runs triggered passes, one after another,
+// until Stop.
+func (s *Scanner) runPasses() {
+	defer close(s.workerDone)
+	for {
+		select {
+		case <-s.stopChan:
+			return
+		case <-s.wake:
+			s.workerPass()
+		}
+	}
+}
+
+// workerPass is one triggered pass. A Stop while it waited for the scan lock
+// leaves it unrun.
+func (s *Scanner) workerPass() {
+	s.lockWait.Store(true)
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
+	defer s.passEnded()
+	if s.stopping() {
+		return
+	}
+	s.askedAt.Store(0)
+	s.runningSince.Store(s.mono(time.Now()))
+	s.lockWait.Store(false)
+	s.passLocked(true)
+}
+
+// passEnded clears the worker's marks, by defer, so a pass that ends in a
+// Goexit reads as a stopped worker and not as one running long. A trigger that
+// waited behind the pass starts waiting on a free worker now.
+func (s *Scanner) passEnded() {
+	if at := s.askedAt.Load(); at != 0 {
+		s.askedAt.CompareAndSwap(at, s.mono(time.Now()))
+	}
+	s.lockWait.Store(false)
+	s.runningSince.Store(0)
+}
+
+// StartBootScan runs the boot pass on its own goroutine, directly and not
+// through the worker, and calls finished when it has ended. Stop joins it.
+func (s *Scanner) StartBootScan(finished func()) {
+	s.bootDone = make(chan struct{})
+	go func() {
+		defer close(s.bootDone)
+		s.bootPass()
+		finished()
+	}()
+}
+
+func (s *Scanner) bootPass() {
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
+	if !s.stopping() {
+		s.passLocked(true)
+	}
+}
+
+// Stop ends the worker, its timer and the boot scan, and waits for them. No
+// pass starts after it; one running ends at the next order boundary, never
+// inside an order's act (a pair's two legs are one act, the leader's:
+// dispatch.dispatchPairInOnePass), so when Stop returns none reads the database
+// (TestScanner_StopEndsAPassBetweenOrdersNeverBetweenAPairsLegs). It takes no
+// lock, returns at once when nothing was started, and gives up after
+// StopJoinLimit, saying so once: a hung call holds a pass for as long as it
+// hangs, and the process is going down.
 func (s *Scanner) Stop() {
 	s.stopOnce.Do(func() { close(s.stopChan) })
-	s.sweeps.Wait()
+	t := time.NewTimer(s.stopWait)
+	defer t.Stop()
+	for _, j := range []struct {
+		what string
+		done chan struct{}
+	}{{"the scan worker", s.workerDone}, {"the safety timer", s.timerDone}, {"the boot scan", s.bootDone}} {
+		if j.done == nil {
+			continue
+		}
+		select {
+		case <-j.done:
+		case <-t.C:
+			s.logFn("fulfillment: stop gave up waiting for %s after %s; shutting down without it", j.what, s.stopWait)
+			return
+		}
+	}
+}
+
+func (s *Scanner) stopping() bool {
+	select {
+	case <-s.stopChan:
+		return true
+	default:
+		return false
+	}
 }
 
 // yieldLostHand is the scanner's answer when its hand lost the status CAS: another
@@ -179,7 +331,7 @@ func (s *Scanner) yieldLostHand(order *orders.Order, err error) {
 	s.logFn("fulfillment: order %d was dispatched by another caller first — yielding: %v", order.ID, err)
 }
 
-func (s *Scanner) scan() int {
+func (s *Scanner) scan(untilStop bool) int {
 	orders, err := s.db.ListAcquiringOrders()
 	if err != nil {
 		log.Printf("fulfillment: list acquiring orders: %v", err)
@@ -194,7 +346,11 @@ func (s *Scanner) scan() int {
 	}
 
 	fulfilled := 0
-	for _, order := range orders {
+	for i, order := range orders {
+		if untilStop && s.stopping() {
+			s.logFn("fulfillment: stopping; the pass ends with %d of %d waiting orders not asked", len(orders)-i, len(orders))
+			break
+		}
 		if s.tryFulfill(order) {
 			fulfilled++
 		}
@@ -277,9 +433,6 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// Re-check. The scan set is the acquiring set (pending or queued, no ask
 	// open), so re-verify the order is still acquiring: not cancelled, failed,
 	// dispatched or asked for by another caller between listing and processing.
-	if s.askedThisPass[order.ID] {
-		return false // asked and parked earlier in this pass (RunOnce)
-	}
 	current, err := s.db.GetOrder(order.ID)
 	if err != nil || !current.Acquiring() {
 		return false
@@ -287,9 +440,6 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// Use the fresh copy for all subsequent operations.
 	if s.fulfill(current, nil) {
 		return true
-	}
-	if s.askedThisPass != nil {
-		s.askedThisPass[current.ID] = true
 	}
 	s.park(current)
 	return false

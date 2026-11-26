@@ -27,7 +27,7 @@ import (
 // list). This one is the rows for the names the Edge sent on bins.watch, so
 // Core keeps, per Edge, in memory: the list as it arrived, its digest (quoted
 // back on every heartbeat ack, in the owned map's bins.watch family, owned.go,
-// or to an Edge that quotes no owned map as EdgeHeartbeatAck.BinWatch), and
+// and
 // what the list was last found to point at — the node ids and bin ids of its
 // last snapshot (a watched group's members included) and the outbound groups
 // of the consume loaders with a window on it, with their windows
@@ -120,14 +120,6 @@ func (b *binsFeed) replace(station string, list *protocol.BinWatchList) {
 	}
 	b.mu.Lock()
 	b.lists[station] = w
-	b.mu.Unlock()
-}
-
-// forget drops an Edge's list: an Edge that no longer quotes the bins feed
-// (rolled back, or older) is sent nothing more.
-func (b *binsFeed) forget(station string) {
-	b.mu.Lock()
-	delete(b.lists, station)
 	b.mu.Unlock()
 }
 
@@ -263,12 +255,6 @@ func (b *binsFeed) list(station string) (names []string, digest string, ok bool)
 	return w.names, w.digest, true
 }
 
-// digestFor is the digest of the list Core holds for an Edge, "" for none.
-func (b *binsFeed) digestFor(station string) string {
-	_, d, _ := b.list(station)
-	return d
-}
-
 // indexBuild records what a snapshot built for the list with this digest found:
 // the nodes its names resolved to (places: the watched names, a watched
 // group's members by their row names, the levelled groups) and the bins
@@ -295,30 +281,6 @@ func (b *binsFeed) indexBuild(station, digest string, places map[string]*nodes.N
 		w.nodeNames[name] = true
 		w.nodeNames[n.Name] = true
 	}
-}
-
-// binWatchFor is the heartbeat ack's BinWatch: the digest of the list Core
-// holds for station (the heartbeat's sender), "" when none. nil for an Edge
-// that sends no Feeds, which would not read it, and for one that quotes the
-// owned map, answered there (heldBinWatch).
-//
-// An Edge whose heartbeat names Feeds but not FeedBins does not speak this
-// feed (a binary from before it, or one rolled back to one): its list is
-// dropped, so no snapshot is pushed to an Edge with no handler for it. The
-// drop runs on both paths, before the owned map is answered.
-func (s *CoreDataService) binWatchFor(station string, p *protocol.EdgeHeartbeat) *string {
-	if p.Feeds == nil {
-		s.bins.forget(station)
-		return nil
-	}
-	if _, quoted := p.Feeds[protocol.FeedBins]; !quoted {
-		s.bins.forget(station)
-	}
-	if p.Owned != nil {
-		return nil
-	}
-	d := s.bins.digestFor(station)
-	return &d
 }
 
 // HandleBinWatch takes an Edge's watch list (bins.watch). It replaces the list

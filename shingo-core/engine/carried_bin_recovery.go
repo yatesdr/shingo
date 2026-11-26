@@ -143,8 +143,8 @@ type onDeckRequest struct {
 // same instant: both chose SMN_001, the second lost the reservation, and its
 // bin's one attempt was spent (evidence S2, 2026-10-02). Holding this across
 // choose-to-reserve makes the second caller choose after the first has
-// reserved. Nothing inside the door calls back into it — the lane park's
-// synchronous scanner pass and the cancel and fail handlers do not — and
+// reserved. Nothing inside the door calls back into it — the lane park and
+// the cancel and fail handlers do not — and
 // attempts are rare, so the lock costs nothing in steady state.
 func (e *Engine) orderCarriedBinDown(binID int64, robotID string, req onDeckRequest) (*orders.Order, string, error) {
 	e.onDeckMu.Lock()

@@ -421,7 +421,7 @@ column facts that live here:
   assigned a part, or a kept-partial **buffer** slot. It is `bin_loader_homes.home_kind` on Core,
   `LoaderPosition.HomeKind` on the wire and `core_loader_positions.home_kind` in the Edge cache, where blank is a
   Core that predates the field.
-- `min_stock` on `bin_loader_homes` and `bin_loader_payloads` (and the Edge cache) is dormant: written 0, read by
+- `min_stock` on `bin_loader_homes` and `bin_loader_payloads` is dormant (Core only: Edge v60 dropped it): written 0, read by
   nothing.
 - `no_clear_partials` is a dedicated loader's Clear partials switch stated as its restriction, so false (the
   default, and what a Core that predates it leaves off `LoaderInfo`) is the clear every loader has. It is
@@ -2006,9 +2006,9 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`changeover_node_tasks`](#edge-changeover_node_tasks) | 11 | `id` | [`orders`](#edge-orders), [`process_changeovers`](#edge-process_changeovers), [`process_nodes`](#edge-process_nodes), [`style_node_claims`](#edge-style_node_claims) |
 | [`changeover_participants`](#edge-changeover_participants) | 7 | `id` | [`changeover_node_tasks`](#edge-changeover_node_tasks), [`process_changeovers`](#edge-process_changeovers), [`process_nodes`](#edge-process_nodes) |
 | [`changeover_station_tasks`](#edge-changeover_station_tasks) | 5 | `id` | [`operator_stations`](#edge-operator_stations), [`process_changeovers`](#edge-process_changeovers) |
-| [`core_loader_payloads`](#edge-core_loader_payloads) | 3 | `loader_key`, `payload_code` |  |
-| [`core_loader_positions`](#edge-core_loader_positions) | 6 | `loader_key`, `position_node` |  |
-| [`core_loaders`](#edge-core_loaders) | 19 | `loader_key` |  |
+| [`core_loader_payloads`](#edge-core_loader_payloads) | 2 | `loader_key`, `payload_code` |  |
+| [`core_loader_positions`](#edge-core_loader_positions) | 5 | `loader_key`, `position_node` |  |
+| [`core_loaders`](#edge-core_loaders) | 18 | `loader_key` |  |
 | [`counter_snapshots`](#edge-counter_snapshots) | 11 | `id` | [`reporting_points`](#edge-reporting_points) |
 | [`demand_origins_open`](#edge-demand_origins_open) | 17 | `episode_key` |  |
 | [`feed_copy`](#edge-feed_copy) | 5 | `feed` |  |
@@ -2020,7 +2020,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`node_lineside_bucket`](#edge-node_lineside_bucket) | 7 | `id` | [`process_nodes`](#edge-process_nodes) |
 | [`operator_stations`](#edge-operator_stations) | 14 | `id` | [`processes`](#edge-processes) |
 | [`order_history`](#edge-order_history) | 6 | `id` | [`orders`](#edge-orders) |
-| [`orders`](#edge-orders) | 47 | `id` | [`process_nodes`](#edge-process_nodes), `orders` |
+| [`orders`](#edge-orders) | 46 | `id` | [`process_nodes`](#edge-process_nodes), `orders` |
 | [`outbox`](#edge-outbox) | 7 | `id` |  |
 | [`payload_catalog`](#edge-payload_catalog) | 8 | `id` |  |
 | [`plc_catid_observations`](#edge-plc_catid_observations) | 6 | `process_id`, `catid` | [`processes`](#edge-processes) |
@@ -2040,7 +2040,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | [`schema_migrations`](#edge-schema_migrations) | 2 | `version` |  |
 | [`shifts`](#edge-shifts) | 5 | `id` |  |
 | [`sourcing_state`](#edge-sourcing_state) | 9 | `process_id`, `style_id` |  |
-| [`style_node_claims`](#edge-style_node_claims) | 49 | `id` | [`styles`](#edge-styles) |
+| [`style_node_claims`](#edge-style_node_claims) | 40 | `id` | [`styles`](#edge-styles) |
 | [`style_node_claims_quarantine`](#edge-style_node_claims_quarantine) | 53 |  |  |
 | [`styles`](#edge-styles) | 7 | `id` | [`processes`](#edge-processes) |
 | [`supply_refusals_open`](#edge-supply_refusals_open) | 7 | `loader_node`, `payload_code` |  |
@@ -2150,7 +2150,6 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 |---|---|---|---|---|---|
 | `loader_key` | `TEXT` | yes |  |  | the owning loader's identity token |
 | `payload_code` | `TEXT` | yes |  |  |  |
-| `min_stock` | `INTEGER` | yes | `0` |  |  |
 
 - Primary key (loader_key, payload_code)
 
@@ -2162,7 +2161,6 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `position_node` | `TEXT` | yes |  |  | the position node NAME (a real node) |
 | `payload_code` | `TEXT` | yes |  |  |  |
 | `home_kind` | `TEXT` | yes | `''` |  | 'home' \| 'buffer' (synced from Core); '' = pre-field Core, fall back to classifying by empty payload |
-| `min_stock` | `INTEGER` | yes | `0` |  |  |
 | `ordinal` | `INTEGER` | yes | `0` |  | where the operator dragged this window; 0 everywhere = nothing arranged, fall back to a number-aware name sort |
 
 - Primary key (loader_key, position_node)
@@ -2178,7 +2176,6 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `replenishment` | `TEXT` | yes | `''` |  |  |
 | `outbound_dest` | `TEXT` | yes | `''` |  |  |
 | `inbound_source` | `TEXT` | yes | `''` |  |  |
-| `config_gen` | `INTEGER` | yes | `0` |  | unread, left at 0: a rolled-back build's loader statements name it (Edge v27) |
 | `funnel_windows` | `INTEGER` | yes | `0` |  | 1 = one window at a time; 0 = spread across windows (the default everywhere) |
 | `leaves_bare` | `INTEGER` | yes | `0` |  | 1 = the stage-1 half of a two-stage unloader: its CLEAR leaves the cart bare and Core stamps the cart's own marker. Core owns it. |
 | `takes_bare` | `INTEGER` | yes | `0` |  | 1 = the stage-2 half of a two-stage unloader, whatever its role: the board draws its windows as an unloader's and nothing asks a carrier into them (Edge v33). Core owns it. |
@@ -2374,7 +2371,6 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `delivery_node` | `TEXT` | yes | `''` |  | delivery_node: authoritative for SIMPLE orders (one bin, one destination).  For COMPLEX orders it is effectively a DISPLAY value and nothing correctness-critical reads it any more. A complex leg has many dropoffs, so one destination field cannot say where its bin came to rest; auto-confirm legs store '' outright; and the swap legs that do store something name the node the ROBOT ends at, not the node the BIN ends at. Every decision that used to consult it — the delivered gate, the supply/evac classifier, the sim operator's confirm scope — now reads steps_json (see swap_leg_role.go).  It is NOT the same value as Core's orders.delivery_node. Edge does not send one: ComplexOrderRequest has no such field, and Core derives its own from the steps (extractEndpoints). Two columns, one name, independent values. |
 | `staging_node` | `TEXT` | yes | `''` |  |  |
 | `source_node` | `TEXT` | yes | `''` |  |  |
-| `load_type` | `TEXT` | yes | `''` |  | load_type: dormant. Nothing on either module read it, and its writers went (2026-10-25); kept at its default so a rolled-back Edge's INSERT runs. |
 | `waybill_id` | `TEXT` |  |  |  |  |
 | `robot_id` | `TEXT` | yes | `''` |  | robot_id (Edge v50): the robot Core assigned, written by a waybill or an order.update that names one. An empty robot on the wire is absent, not a clear. '' = none named yet. |
 | `external_ref` | `TEXT` |  |  |  |  |
@@ -2402,7 +2398,6 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `release_facts` | `TEXT` |  |  |  | release_facts (Edge v8): the leg's static release facts, computed from its steps when this Edge created it (release.Facts, JSON): the nodes it leaves a bin at, the bin its release lifts, the nodes a release lets a bin cross, its role at its process node. NULL for an order with no steps this Edge authored, and for every row older than v8. |
 | `release_intent` | `TEXT` | yes | `''` |  | release_intent / release_held (Edge v9): the act's promise to this leg for one station wait (release.Intent, JSON; '' = none), and the last hold or rejection sentence the board's chip shows. |
 | `release_held` | `TEXT` | yes | `''` |  |  |
-| `cancel_intent` | `TEXT` | yes | `''` |  | cancel_intent (Edge v60): the cancel this station asked Core for and Core has not ended (domain.CancelIntent, JSON; '' = none). The row keeps Core's status until Core's word ends it, which clears this. |
 | `staged_at` | `TEXT` |  |  |  | staged_at (Edge v54): the engine's clock when this Edge last mirrored the order to staged (a robot parked). NULL until then. The idle rule's hour does not start before it (engine/idle_cancel.go). |
 | `core_version` | `INTEGER` | yes | `0` |  | core_version (Edge v59): the version of the last Core word applied to the order (protocol.OrderUpdate.Version). 0 = none yet. |
 | `want` | `TEXT` | yes | `''` |  | want (Edge v30): the height an empty is wanted at, as this Edge stated it on the order's request (protocol.Height's spelling; '' is none). SEND BACK knows its pull by it; a projection never writes it. |
@@ -2411,6 +2406,7 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `payload_desc` | `TEXT` | yes | `''` |  |  |
 | `origin_id` | `TEXT` | yes | `''` |  |  |
 | `origin_class` | `TEXT` | yes | `''` |  |  |
+| `cancel_intent` | `TEXT` | yes | `''` |  |  |
 
 #### Edge: `outbox`
 
@@ -2710,9 +2706,8 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `role` | `TEXT` | yes | `'consume'` |  |  |
 | `swap_mode` | `TEXT` | yes |  |  |  |
 | `payload_code` | `TEXT` | yes | `''` |  |  |
-| `uop_capacity` | `INTEGER` | yes | `0` |  | DEAD. Capacity is Core's fact, resolved from payload_catalog on every claim read (capacity.SQL) and keyed on payload_code above. Nothing reads or writes this column; it holds whatever it held when the copies stopped, and it goes on the next rebuildStyleNodeClaims(). It is not dropped here because a column rebuild is its own change with its own risk, and because the old numbers are the only record of how far the copies had drifted. |
 | `reorder_point` | `INTEGER` | yes | `0` |  |  |
-| `auto_reorder` | `INTEGER` | yes | `0` |  | Cell auto-reorder is opt-IN: a claim must not arm itself. Was DEFAULT 1, which made "new claim" mean "count-driven order creation is live" before anyone chose it. Every INSERT in the codebase names this column explicitly (processes/claims.go UpsertClaim, processes/styles.go cloneClaimColumns, seeddev/seed_edge.go), so the default is reachable only by a future hand-written INSERT that omits it — which is exactly the case that should land off. Fresh databases only: this is CREATE TABLE IF NOT EXISTS and there is no ALTER for this column, so an existing plant DB keeps its current table definition and its current per-claim values either way. |
+| `auto_reorder` | `INTEGER` | yes | `0` |  | Cell auto-reorder is opt-IN: a claim must not arm itself. Was DEFAULT 1, which made "new claim" mean "count-driven order creation is live" before anyone chose it. Every INSERT in the codebase names this column explicitly (processes/claims.go UpsertClaim, processes/styles.go cloneClaimColumns, seeddev/seed_edge.go), so the default is reachable only by a future hand-written INSERT that omits it — which is exactly the case that should land off. |
 | `inbound_staging` | `TEXT` | yes | `''` |  |  |
 | `outbound_staging` | `TEXT` | yes | `''` |  |  |
 | `inbound_source` | `TEXT` | yes | `''` |  |  |
@@ -2744,14 +2739,6 @@ foreign key, and a column that names a node or an order by name (`orders.deliver
 | `source_preset_id` | `INTEGER` |  |  |  | source_preset_id / _version are PROVENANCE: which flow_presets row and version this claim was expanded from, when it was. Never a drift oracle — drift is computed from the rows themselves. |
 | `source_preset_version` | `INTEGER` |  |  |  |  |
 | `created_at` | `TEXT` | yes | `(datetime('now'))` |  |  |
-| `staging_node` | `TEXT` | yes | `''` |  |  |
-| `release_node` | `TEXT` | yes | `''` |  |  |
-| `inbound_source_node` | `TEXT` | yes | `''` |  |  |
-| `inbound_source_node_group` | `TEXT` | yes | `''` |  |  |
-| `outbound_source_node` | `TEXT` | yes | `''` |  |  |
-| `outbound_source_node_group` | `TEXT` | yes | `''` |  |  |
-| `outbound_source` | `TEXT` | yes | `''` |  |  |
-| `mode` | `TEXT` | yes | `'loader'` |  |  |
 | `second_paired_core_node` | `TEXT` | yes | `''` |  |  |
 
 - Unique (style_id, core_node_name)

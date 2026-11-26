@@ -16,7 +16,7 @@ binary is built from has changed since the last tag, the section opens with
 
 ## Unreleased
 
-Deploy: Edge v60 (the order's cancel sent to Core); Core and Edges in either order.
+Deploy: Edge v61 (the order's cancel sent to Core); Core and Edges in either order. An Edge rolled back to v0.20.1 refuses a database at v61 by name: roll back with the installer's pre-install copy in /var/backups/shingo-edge, not the previous binary alone.
 
 - An order that has to move bins out of a lane to reach its cart, cancelled or re-planned while one of those moves is setting its bin down, lets that move finish and confirm; it used to cancel it and ask the fleet to stop its finished job, and a second cancel of the order answered the station twice
 - When one of those moves is cancelled by a person or stopped by the fleet and the order re-plans, its history now names that move, where it read "a dig leg failed" or "the dig's plan went stale"
@@ -61,6 +61,56 @@ Deploy: Edge v60 (the order's cancel sent to Core); Core and Edges in either ord
 - A Sequential A/B line whose carts come from a loader's home now gets the cart its backfill fetches there: the robot sets it on the line. It used to set it back down on the home it had just lifted it from, and the line was left without a cart. The same for a part change's delivery from a staging spot that is a loader's home
 - A cart coming back to a loader that has two homes for its part goes to the second home when its own home is taken and the second stands empty, before any buffer. It used to go to a buffer, or, with every buffer full, wait while Core's message named that empty home as a spot to clear
 - A part change, a tool change or an index press's Robot 1 that sets the old cart down at a loader's home on its way now sends it to a free buffer when that home already holds a cart, or waits for a spot when every buffer is full ("Waiting for a slot at" the home). It used to send the robot to set the cart down on the occupied home, and Core then read the cart standing there as in transit
+
+## v0.20.1 — 2026-11-24
+
+Deploy: no migration. Edge only; Core is unchanged and needs no install.
+
+- On an Edge process's Settings, each operator screen is one row, the same on a line and on a loader or unloader: its name with Rename and Open the screen as buttons. On a line it is now above the positions pick (it was small grey Edit and Open text under the whole node list)
+
+## v0.20.0 — 2026-11-23
+
+Deploy: Edge v60, and no new Core migration (Core's migration 190 is edited in place, as 185's was: a database already at it runs nothing). Core first, then every Edge of the plant. The two run mixed with v0.19.0 either way, with one exception: a v0.19.0 Core can still send the retired Bound message to an Edge whose schema it could not read, and this Edge takes it as a count. An Edge must have started once on v0.19.0: the installer asks before it stops the service and refuses one that has not. Nothing below the floor (Core v0.19.0, Edge v0.19.0) is refused on the wire; /edges marks it. Rollback: the previous binary on either side. The Edge has no down step: v0.19.0 runs on the upgraded database, and the installer's copy holds what the upgrade dropped.
+
+- The sim plant's sizing check (simcalc) fails a kanban that takes back more carts than it draws, or that names no source and stands fewer than a transit's worth, and counts what its keeper pulls from elsewhere
+- In the sim plant, the finished-goods unloader sends empty carriers back to the market, so the press-empties kanban no longer fills with one type and starves a press
+- In the sim plant, the five-press kanban has ten more carts and positions, so five presses drawing a cart a minute no longer share two spares
+- The sim plant's sizing check counts each carrier type's empties in a store against that type's own need, and the sim plant's market has four more empty carts of the type it was short
+- A station that is applying every update is no longer flagged "not converging" on Core's Edges page or on the Edge's own status for quoting a copy a few changes old
+- A station that applies each sourcing change as Core sends it is no longer flagged "sourcing not converging" on the Edges page
+- A station that applies each containment change as Core sends it is no longer flagged "containment not converging" when several come close together
+- Several claim or style saves a minute on an Edge no longer flag that process's claims "not converging" while Core is taking each one
+- A station stuck on the last update pushed to it is now flagged "not converging": until now that one was never flagged, so a flag may appear where none did
+- Core no longer piles up order-matching passes after a burst of plant events, so orders, asks and counts from the Edges are read without waiting behind them.
+- A part count no longer holds up the Edges' other messages while Core decides a loader's refill; the refill follows a moment later.
+- The Edges page no longer reads an Edge's clock as seconds behind because Core was working through a burst of order-matching passes.
+- Core Health and the log say when the order-matching worker has stopped, and, separately, when one pass is running long and for how long.
+- The freeze alarm for Core's scan lock now calls it "the scan lock" (it said "the scan pass").
+- Stopping Core lets the order in hand finish, waits at most 12 seconds, and starts nothing after it.
+- A count or a reset at a node two stations claim reaches both; only the station holding that bin changes.
+- Stations flags a node two stations claim, on both rows, until one of them takes it off.
+- An Edge's positions picker greys a node another station claims, with that station's name.
+- Stations can remove a stale station; its claims, its loader refills and its name go, its history stays.
+- Restoring an Edge backup puts the backup in place after a crash too; the live rows the killed Edge left beside the database used to come back over it
+- An Edge older than v0.19.0, or a backup from one, no longer upgrades in one install: the Edge refuses it by name and changes nothing. Install v0.19.0, start it once, then this
+- A table or column missing from an Edge's database stops the Edge with its name; the table used to be made again, empty, without a word
+- An Edge with styles and no process no longer makes up a process named Line 1 when it starts
+- An Edge starts with a few statements instead of about 400, and refuses a database a newer release wrote
+- The Edge installer asks the new build about the database before it stops the Edge, and calls an install good only when /status answers; a start that fails no longer reads as installed
+- The Edge installer keeps its pre-install copy of the config and database in /var/backups/shingo-edge, readable by root alone; copies older installs left in /tmp are not removed
+- shingoedge migrate check says, writing nothing, whether a build will start on an Edge's database; a backup it would refuse is refused when it is staged and again before it replaces anything
+- An Edge whose database differs from its release's schema says so on /status and Diagnostics, naming what differs; it still starts
+- The Edge upgrade drops columns and two leftover tables nothing reads, and repairs a Springfield Edge's links to renamed tables; rows are kept, and v0.19.0 still runs on the result
+- Core: `migrate down 190` puts a removed table's id sequence back with the type it had.
+- Core: a database restored from a backup older than v0.19.0 upgrades through migration 190 without a hand fix; a name something else holds stops it with a sentence naming the holder.
+- Core install: `migrate check` refuses a database whose restore skipped tables, naming them and the Postgres version, before the running Core is stopped.
+- The oldest supported peer is v0.19.0 on both sides: an older Edge shows as below the floor on /edges and Core Health.
+- An Edge no longer repeats its station id inside a register, heartbeat, robot watch or lineside report: about 36 bytes less on each.
+- The heartbeat answer drops its two old fields (claims, bin watch): 14 bytes less a minute on each Edge.
+- order.delivered drops the carrier's count, generation and part (about 67 bytes); the landing binds, and a delivery the seat doesn't hold is still said.
+- Core docs: the restore commands stop on the first error, restore nothing, and print the Postgres version.
+- Core install: a config backup that fails stops the install instead of reporting a backup that isn't there.
+- Every Edge gets a carrier's landing; the older Bound message is gone on both sides.
 
 ## v0.19.0 — 2026-11-22
 

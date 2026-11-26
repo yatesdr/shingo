@@ -228,6 +228,13 @@ func TestSchemaConvergesAcrossVintages(t *testing.T) {
 					t.Fatalf("apply the vintage's leftovers: %v\n(%s)", err, v.Why)
 				}
 			}
+			// migrate check takes every vintage this build takes. Red here is a
+			// migration above the retired chain that creates a table: check
+			// must then require that table from its version on
+			// (store.checkTablesThere).
+			if _, _, err := store.CheckDatabase(inst.DBConfigForTest(name)); err != nil {
+				t.Errorf("migrate check refuses a vintage this build takes: %v", err)
+			}
 			if err := inst.Reboot(ctx, name); err != nil {
 				t.Fatalf("this build's boot of the vintage: %v\n(%s)", err, v.Why)
 			}

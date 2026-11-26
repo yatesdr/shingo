@@ -271,11 +271,13 @@ func (e *Engine) CreateBinMove(req BinMoveRequest) (*BinMoveResult, error) {
 	// the periodic pass to ask again.
 	e.acquireOne(order)
 	// A move that took a promised bin un-pointed its holder (TakeSoftHolds),
-	// which waits with the bin-taken cause. One pass now re-finds it, as main's
-	// queue event did, instead of the 60 s floor. A move that took nothing
-	// asks nothing else.
+	// which waits with the bin-taken cause. The pass this triggers re-finds it,
+	// as main's queue event did, instead of the 60 s floor; the answer below
+	// reads only this move's order, so the person does not wait for that pass
+	// (TestBinMove_ATakenHolderIsReFoundAtOnce). A move that took nothing asks
+	// nothing else.
 	if taken.Unpointed > 0 && e.fulfillment != nil {
-		e.fulfillment.RunOnce()
+		e.fulfillment.Trigger()
 	}
 	return e.binMoveAsItStands(order, p)
 }

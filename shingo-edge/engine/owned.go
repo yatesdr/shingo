@@ -27,11 +27,8 @@ import (
 // TestOnCoreAck_AQuietAckRunsNoStatementAndNoHash,
 // TestOwned_EveryOwnedDigestIsInABuildOrASend.
 //
-// AN OLDER CORE (an ack with no Owned) is answered by the same loop from the
-// two fields it sends: Claims, every process Core holds a report for at its
-// digest, and BinWatch, the digest of the watch list it holds. No cells are
-// sent to it: the register carries them, as before. PIN:
-// TestOnCoreAck_ClaimsReachThePublisherOnlyWhenSent,
+// An ack with no Owned answers no family: nothing is sent, settled or built.
+// PIN: TestOnCoreAck_ClaimsReachThePublisherOnlyWhenSent,
 // TestBinWatch_WhenTheListIsPublished.
 
 // ownedFloor is how often every family is rebuilt from the store whatever its
@@ -69,10 +66,6 @@ type ownedRow struct {
 	// longer holds it, under the resend guard. pending false: Core holds it
 	// after all (a fresher read matched quoted), so it is converged.
 	send func(e *Engine, held ownedHeld, member, quoted string) (pending bool)
-	// legacy answers the family from an older Core's ack (no Owned): what Core
-	// holds by member, what this Edge holds in the same terms, and whether the
-	// ack carried the family at all. nil: an older Core does not serve it.
-	legacy func(held ownedHeld, ack *protocol.EdgeHeartbeatAck) (core, mine map[string]string, served bool)
 	// force sends the members on the first ack that answers the family even
 	// where Core's digest is this Edge's (the watch list while no bins copy is
 	// held: a restarted Edge asks for its snapshot by sending its list).
@@ -88,9 +81,9 @@ type ownedRow struct {
 // ownedRows has one row per Edge-owned family.
 var ownedRows = [...]ownedRow{
 	{key: protocol.OwnedClaims, guard: claimsGuardKey, member: claimsMemberOf,
-		build: buildClaimsFamily, send: sendClaimsMember, legacy: legacyClaims},
+		build: buildClaimsFamily, send: sendClaimsMember},
 	{key: protocol.OwnedBinWatch, guard: singletonGuard(binWatchKey), member: singletonMember(binWatchKey),
-		build: buildBinWatchFamily, send: sendBinWatchMember, legacy: legacyBinWatch,
+		build: buildBinWatchFamily, send: sendBinWatchMember,
 		force: func(e *Engine) bool { return e.nodeBins.Load() == nil },
 		check: func(e *Engine) {
 			if e.binWatchSource != nil {
@@ -121,25 +114,15 @@ type ownedHeld struct {
 	digest, quoted string
 	// seq orders builds, so a slow build never replaces a newer one.
 	seq uint64
-	// served: the last ack answered the family; legacy: in an older Core's
-	// fields; carried: some ack has since boot. coreHeld is what Core held by
-	// member as of the last ack that said (an answer with members, or one
-	// equal to the quote).
-	served, legacy, carried bool
-	coreHeld                map[string]string
+	// served: the last ack answered the family; carried: some ack has since
+	// boot. coreHeld is what Core held by member as of the last ack that said
+	// (an answer with members, or one equal to the quote).
+	served, carried bool
+	coreHeld        map[string]string
 	// builds counts the builds, so a test can tell a quiet ack built nothing
 	// (TestOnCoreAck_AQuietAckRunsNoStatementAndNoHash). Written only by a
 	// build, under the lock the build takes anyway.
 	builds int
-}
-
-// mine is this Edge's members in the terms the last ack used.
-func (h ownedHeld) mine(row ownedRow, ack *protocol.EdgeHeartbeatAck) map[string]string {
-	if h.legacy && row.legacy != nil {
-		_, mine, _ := row.legacy(h, ack)
-		return mine
-	}
-	return h.members
 }
 
 func (b *feedBook) ownedLocked(key string) *ownedHeld {
@@ -233,8 +216,7 @@ func (e *Engine) OwnedDigests() map[string]string {
 	return out
 }
 
-// answerOwned takes the ack's answer for every family: ack.Owned from a Core
-// that speaks the owned map, else the older Core's two fields (ownedRow.legacy).
+// answerOwned takes the ack's answer for every family, ack.Owned.
 //
 // For each family the ack answers: equal to the heartbeat's quote, the family
 // has converged and every guard key of it settles (ClaimsSettled's rule, for
@@ -244,30 +226,14 @@ func (e *Engine) OwnedDigests() map[string]string {
 // does not answer sends and settles nothing. All of it from the cache: no
 // statement and no digest unless something is sent.
 func (e *Engine) answerOwned(ack *protocol.EdgeHeartbeatAck) {
-	legacy := ack.Owned == nil
 	for _, row := range ownedRows {
-		var (
-			core   map[string]string
-			served bool
-			equal  bool
-		)
-		if !legacy {
-			var a protocol.OwnedAnswer
-			a, served = ack.Owned[row.key]
-			core = a.Members
-			e.feeds.mu.Lock()
-			equal = served && a.Digest == e.feeds.ownedLocked(row.key).quoted
-			e.feeds.mu.Unlock()
-		} else if row.legacy != nil {
-			e.feeds.mu.Lock()
-			snap := *e.feeds.ownedLocked(row.key)
-			e.feeds.mu.Unlock()
-			core, _, served = row.legacy(snap, ack)
-		}
+		a, served := ack.Owned[row.key]
+		core := a.Members
 		e.feeds.mu.Lock()
 		hp := e.feeds.ownedLocked(row.key)
+		equal := served && a.Digest == hp.quoted
 		first := served && !hp.carried
-		hp.served, hp.legacy = served, legacy
+		hp.served = served
 		hp.carried = hp.carried || served
 		e.feeds.mu.Unlock()
 		if !served {
@@ -299,7 +265,7 @@ func (e *Engine) answerOwned(ack *protocol.EdgeHeartbeatAck) {
 			}
 			core = h.members
 		}
-		mine := h.mine(row, ack)
+		mine := h.members
 		pending := map[string]bool{}
 		for _, m := range memberNames(mine) {
 			if h.unread[m] {
@@ -338,7 +304,7 @@ func (e *Engine) ownedChanged(key string) {
 	if !h.ok || !h.served {
 		return
 	}
-	mine := h.mine(row, nil)
+	mine := h.members
 	for _, m := range memberNames(mine) {
 		switch q, has := h.coreHeld[m]; {
 		case h.unread[m]:
@@ -488,10 +454,13 @@ func (e *Engine) claimsSourceNow() ClaimsSource {
 }
 
 // ClaimsReported is the publisher's save hook: it built one process's report
-// (an edit, a style flip) and published it. The claims family takes the
-// digest, so the next heartbeat quotes it. styled false: the process has no
-// styles, or no longer exists, and is no member.
+// (an edit, a style flip) and publishes it. The claims family takes the
+// digest, so the next heartbeat quotes it, and the publish is recorded as a
+// push, so a Core quoting it while a later save's is on its way is converging
+// (pinned by TestOwned_ASavesPublishQuotedBackConverges). styled false: the
+// process has no styles, or no longer exists, and is no member.
 func (e *Engine) ClaimsReported(process, digest string, styled bool) {
+	e.recordPush(claimsGuardKey(process), digest)
 	e.updateOwnedMember(protocol.OwnedClaims, process, digest, styled)
 }
 
@@ -547,15 +516,6 @@ func sendClaimsMember(e *Engine, _ ownedHeld, process, quoted string) bool {
 	}
 	e.updateOwnedMember(protocol.OwnedClaims, process, digest, styled)
 	return held
-}
-
-// legacyClaims is an older Core's Claims map: every process it holds, at its
-// digest, on every ack; nil is a Core that does not quote claims.
-func legacyClaims(h ownedHeld, ack *protocol.EdgeHeartbeatAck) (core, mine map[string]string, served bool) {
-	if ack == nil {
-		return nil, h.members, false
-	}
-	return ack.Claims, h.members, ack.Claims != nil
 }
 
 // ── the cell catalog ─────────────────────────────────────────────────────────

@@ -139,7 +139,7 @@ func TestIngestorDispatch(t *testing.T) {
 	env, _ := NewDataEnvelope(SubjectEdgeRegister,
 		Address{Role: RoleEdge, Station: "test-node"},
 		Address{Role: RoleCore},
-		&EdgeRegister{StationID: "test-node"},
+		&EdgeRegister{Hostname: "test-host"},
 	)
 	data, _ := env.Encode()
 
@@ -155,8 +155,8 @@ func TestIngestorDispatch(t *testing.T) {
 	// Verify two-level decode of the body
 	var reg EdgeRegister
 	testutil.MustNoErr(t, json.Unmarshal(handler.dataPayload.Body, &reg), "unmarshal body")
-	if reg.StationID != "test-node" {
-		t.Errorf("station_id = %q, want %q", reg.StationID, "test-node")
+	if reg.Hostname != "test-host" {
+		t.Errorf("hostname = %q, want %q", reg.Hostname, "test-host")
 	}
 }
 
@@ -170,7 +170,7 @@ func TestIngestorFilter(t *testing.T) {
 	env, _ := NewDataEnvelope(SubjectEdgeRegister,
 		Address{Role: RoleEdge, Station: "test-node"},
 		Address{Role: RoleCore},
-		&EdgeRegister{StationID: "test-node"},
+		&EdgeRegister{},
 	)
 	data, _ := env.Encode()
 
@@ -190,7 +190,7 @@ func TestIngestorDropsExpired(t *testing.T) {
 	env, _ := NewDataEnvelope(SubjectEdgeRegister,
 		Address{Role: RoleEdge, Station: "test-node"},
 		Address{Role: RoleCore},
-		&EdgeRegister{StationID: "test-node"},
+		&EdgeRegister{},
 	)
 	// Force expiry in the past
 	env.ExpiresAt = time.Now().UTC().Add(-1 * time.Minute)
@@ -228,7 +228,7 @@ func TestWireFormatKeys(t *testing.T) {
 	env, _ := NewDataEnvelope(SubjectEdgeHeartbeat,
 		Address{Role: RoleEdge, Station: "n1"},
 		Address{Role: RoleCore},
-		&EdgeHeartbeat{StationID: "n1", Timezone: "America/Chicago"},
+		&EdgeHeartbeat{Timezone: "America/Chicago"},
 	)
 	data, _ := env.Encode()
 
@@ -257,8 +257,7 @@ func TestDataEnvelopeRoundTrip(t *testing.T) {
 	dst := Address{Role: RoleCore}
 
 	env, err := NewDataEnvelope(SubjectEdgeRegister, src, dst, &EdgeRegister{
-		StationID: "plant-a.line-1",
-		Version:   "1.0.0",
+		Version: "1.0.0",
 	})
 	if err != nil {
 		t.Fatalf("NewDataEnvelope: %v", err)
@@ -287,8 +286,8 @@ func TestDataEnvelopeRoundTrip(t *testing.T) {
 	// Level 2: decode body
 	var reg EdgeRegister
 	testutil.MustNoErr(t, json.Unmarshal(d.Body, &reg), "unmarshal body")
-	if reg.StationID != "plant-a.line-1" {
-		t.Errorf("station_id = %q, want %q", reg.StationID, "plant-a.line-1")
+	if decoded.Src.Station != "plant-a.line-1" {
+		t.Errorf("src station = %q, want %q", decoded.Src.Station, "plant-a.line-1")
 	}
 	if reg.Version != "1.0.0" {
 		t.Errorf("version = %q, want %q", reg.Version, "1.0.0")
@@ -354,7 +353,7 @@ func TestDataWireFormat(t *testing.T) {
 	env, _ := NewDataEnvelope(SubjectEdgeHeartbeat,
 		Address{Role: RoleEdge, Station: "plant-a.line-1"},
 		Address{Role: RoleCore},
-		&EdgeHeartbeat{StationID: "plant-a.line-1", Timezone: "America/Chicago"},
+		&EdgeHeartbeat{Timezone: "America/Chicago"},
 	)
 	raw, _ := env.Encode()
 
@@ -389,8 +388,10 @@ func TestDataWireFormat(t *testing.T) {
 	// Verify inner data can be decoded
 	var hb EdgeHeartbeat
 	testutil.MustNoErr(t, json.Unmarshal(payload["data"], &hb), "unmarshal heartbeat data")
-	if hb.StationID != "plant-a.line-1" || hb.Timezone != "America/Chicago" {
-		t.Errorf("heartbeat = %+v, want station plant-a.line-1, zone America/Chicago", hb)
+	var from Address
+	testutil.MustNoErr(t, json.Unmarshal(wire["src"], &from), "unmarshal src")
+	if from.Station != "plant-a.line-1" || hb.Timezone != "America/Chicago" {
+		t.Errorf("heartbeat from %q = %+v, want station plant-a.line-1, zone America/Chicago", from.Station, hb)
 	}
 }
 
@@ -495,7 +496,7 @@ func TestIngestorWithSigning(t *testing.T) {
 	env, _ := NewDataEnvelope(SubjectEdgeRegister,
 		Address{Role: RoleEdge, Station: "test-node"},
 		Address{Role: RoleCore},
-		&EdgeRegister{StationID: "test-node"},
+		&EdgeRegister{},
 	)
 	data, _ := env.Encode()
 	signed, _ := Sign(data, key)
@@ -517,7 +518,7 @@ func TestIngestorRejectsUnsignedWhenKeySet(t *testing.T) {
 	env, _ := NewDataEnvelope(SubjectEdgeRegister,
 		Address{Role: RoleEdge, Station: "test-node"},
 		Address{Role: RoleCore},
-		&EdgeRegister{StationID: "test-node"},
+		&EdgeRegister{},
 	)
 	data, _ := env.Encode()
 

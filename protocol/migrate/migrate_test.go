@@ -53,7 +53,7 @@ func TestCheckOrder(t *testing.T) {
 // package existed (it was extracted verbatim; see that file's history).
 // The SQLite texts are the same statements with ? placeholders and a
 // SQLite-legal applied_at default — and byte-identical to the CREATE
-// appended to shingo-edge/store/schema/sqlite_ddl.go, which the Edge
+// the Edge's generated baseline carries, which the Edge
 // snapshot gate (TestSchemaSnapshotIsCurrent) pins from the other side.
 func TestDialectSQLMatchesTheExtraction(t *testing.T) {
 	if createTableSQL[Postgres] != `CREATE TABLE IF NOT EXISTS schema_migrations (

@@ -208,10 +208,10 @@ func TestCoreWord_APlainOrderFollowsCoresVersionsEndToEnd(t *testing.T) {
 
 	// Core queues order.delivered before its status write, so it lands first:
 	// the facts are written and wait for Core's delivered.
-	bin, uop, code := int64(77), 30, "PART-M"
+	bin := int64(77)
 	at := time.Date(2026, 11, 17, 9, 30, 0, 0, time.UTC)
 	r.h.HandleOrderDelivered(wire, &protocol.OrderDelivered{OrderUUID: uuid, DeliveredAt: at, BinID: &bin,
-		UOPRemaining: &uop, BinPayloadCode: &code, DeltaEpoch: 4, DeliveryNode: "TEST-NODE", LandingSent: true})
+		DeliveryNode: "TEST-NODE", LandingSent: true})
 	if o := r.at("order.delivered", id, protocol.StatusInTransit, 3); o.BinID == nil || *o.BinID != bin {
 		t.Errorf("after order.delivered the row's bin is %v, want %d", o.BinID, bin)
 	}
@@ -240,11 +240,9 @@ func TestCoreWord_APlainOrderFollowsCoresVersionsEndToEnd(t *testing.T) {
 		t.Fatalf("%d delivered events, want 1", len(r.delivered))
 	}
 	d := r.delivered[0]
-	if d.OrderID != id || d.BinID == nil || *d.BinID != bin || d.BinUOP == nil || *d.BinUOP != uop ||
-		d.BinPayloadCode == nil || *d.BinPayloadCode != code || d.BinEpoch != 4 || !d.LandingSent {
-		t.Errorf("the delivered event carries order %d, bin %v, uop %v, payload %v, epoch %d, landing %v; "+
-			"want order %d and the envelope's bin %d, uop %d, %s, epoch 4, landing sent",
-			d.OrderID, d.BinID, d.BinUOP, d.BinPayloadCode, d.BinEpoch, d.LandingSent, id, bin, uop, code)
+	if d.OrderID != id || d.BinID == nil || *d.BinID != bin || !d.FromNotice {
+		t.Errorf("the delivered event carries order %d, bin %v, from a notice %v; want order %d, the envelope's bin %d, from the notice",
+			d.OrderID, d.BinID, d.FromNotice, id, bin)
 	}
 	if got := r.receipts(); len(got) != 1 || got[0].OrderUUID != uuid || got[0].FinalCount != 1 {
 		t.Errorf("order.receipt rows %+v, want the operator's one, count 1", got)
@@ -334,10 +332,10 @@ func TestCoreWord_DeliveredFollowOnsRunOnceWhicheverHalfLandsFirst(t *testing.T)
 			}
 			r.live(uuid, protocol.StatusInTransit, 3)
 
-			bin, uop := int64(41), 12
+			bin := int64(41)
 			envelope := func() {
 				r.h.HandleOrderDelivered(wire, &protocol.OrderDelivered{OrderUUID: uuid,
-					DeliveredAt: time.Date(2026, 11, 17, 9, 30, 0, 0, time.UTC), BinID: &bin, UOPRemaining: &uop, DeltaEpoch: 2})
+					DeliveredAt: time.Date(2026, 11, 17, 9, 30, 0, 0, time.UTC), BinID: &bin})
 			}
 			tell := func() {
 				r.update(protocol.OrderUpdate{OrderUUID: uuid, Status: string(protocol.StatusDelivered), Version: 4})
@@ -373,8 +371,8 @@ func TestCoreWord_DeliveredFollowOnsRunOnceWhicheverHalfLandsFirst(t *testing.T)
 			r.at("the end", id, want, 4)
 			expectRows(t, "history", r.history(id), history)
 			if len(r.delivered) != 1 || r.delivered[0].BinID == nil || *r.delivered[0].BinID != bin ||
-				r.delivered[0].BinUOP == nil || *r.delivered[0].BinUOP != uop || r.delivered[0].BinEpoch != 2 {
-				t.Errorf("delivered events %+v, want one carrying bin %d, uop %d, epoch 2", r.delivered, bin, uop)
+				!r.delivered[0].FromNotice {
+				t.Errorf("delivered events %+v, want one carrying bin %d, from the notice", r.delivered, bin)
 			}
 			receipts := r.receipts()
 			switch {

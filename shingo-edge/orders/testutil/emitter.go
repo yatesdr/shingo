@@ -26,10 +26,10 @@ func (NoOpOrderEmitter) EmitOrderStatusChanged(orderID int64, orderUUID string, 
 func (NoOpOrderEmitter) EmitOrderCompleted(orderID int64, orderUUID string, orderType protocol.OrderType, payloadID, processNodeID *int64, cancelBy string) {
 }
 
-func (NoOpOrderEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binUOP *int, binPayloadCode *string, binEpoch int64, binDestNode, deliveryNode string, landingSent bool) {
+func (NoOpOrderEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binDestNode, deliveryNode string, fromNotice bool) {
 }
 
-func (NoOpOrderEmitter) EmitOrderDeliveredFallback(binID int64, binUOP *int, binPayloadCode *string, binEpoch int64, deliveryNode string, landingSent bool) {
+func (NoOpOrderEmitter) EmitOrderDeliveredFallback(binID int64, deliveryNode string) {
 }
 
 func (NoOpOrderEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, code, reason string) {

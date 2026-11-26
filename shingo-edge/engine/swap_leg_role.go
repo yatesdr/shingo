@@ -14,7 +14,7 @@ import (
 // the given nodes. It is the destination question both changeover gates ask,
 // answered by protocol.OrderPlacesBinAt, the one rule both modules read: a
 // complex order by its steps, any other order by its delivery node (the
-// delivery_node comment on the orders table, store/schema/sqlite_ddl.go, says
+// delivery_node comment on the orders table, store/schema/baseline.sql, says
 // which column is authoritative for which shape). A plain order is never asked
 // for its steps, so it costs no read here.
 //

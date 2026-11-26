@@ -19,12 +19,12 @@ types, so no section's keeper or loader draws another's carts.
 
 | Tag | What it is | Edge | Carriers |
 |---|---|---|---|
-| `[demo]` | The demo loop: PRESS-1/2 into `SYN_MARKET`, WELD-1..5, the BRKT/CLIP/STUD/SHIM loaders (multi-window, single-window, dedicated positions), UNLOADER-A into the `SYN_PRESS_EMPTIES` kanban, all four swap modes, the PRESS-1 tooling and carry-over changeovers | EDGE 1 | STANDARD, STANDARD-SM |
+| `[demo]` | The demo loop: PRESS-1/2 into `SYN_MARKET`, WELD-1..5, the BRKT/CLIP/STUD/SHIM loaders (multi-window, single-window, dedicated positions), UNLOADER-A back into `SYN_MARKET`, the keeper-fed `SYN_PRESS_EMPTIES` kanban, all four swap modes, the PRESS-1 tooling and carry-over changeovers | EDGE 1 | STANDARD, STANDARD-SM |
 | `[multi-cart]` | `[demo]`'s PRESS-1 (press-index: R2 carries two carts) and WELD-2 (the single-robot relay: two carts, four lifts) | EDGE 1 | (demo's) |
 | `[4x2]` | WELD-6: a two-robot weld, five consume positions fed by five loaders; RUN and ALT share COMMON-1..3 and run MIRROR-L / MIRROR-R at the two mirror positions; CATID pins 1001 / 1002; production counter `MES_WELD_6.Prod_Counter_01` (identity `CATID_01` beside it); load-station counter `STA_W6_LOAD.Load_Count` over all five positions; `line_depth` 16 in `shingoedge.dev.yaml` | EDGE 1 | CORRIDOR |
 | `[corridor]` | The lane-stress storage, slot for slot: `SYN_STAMP` and `SYN_COMP`, single-file lanes of depth 1-5 behind their zones' wait points, the oldest carts buried at depth 5 and 4; two lanes' worth of headroom per group (`headroom: free_lanes: 2`). It is `[4x2]`'s market | (Core) | CORRIDOR |
 | `[kanban]` | KP-PRESS (two-off, four positions) on `PRESS-KANBAN` (the 45x48 family and CART-32, pools 10 and 6), KW-WELD on `WELD-KANBAN`, their unloaders pushing back, and `KP-SM`, the plain supermarket a family deficit raids | EDGE 1 | SMALL-45, BIG-45, TOTES-45, CART-32 |
-| `[kanban5]` | Five presses of KP-PRESS's shape on one `P5-KANBAN` (pools 26 and 22) through one unloader of ten windows; its raid supermarket is `KP-SM` | EDGE 1 | (kanban's) |
+| `[kanban5]` | Five presses of KP-PRESS's shape on one `P5-KANBAN` (pools 36 and 22) through one unloader of ten windows; its raid supermarket is `KP-SM` | EDGE 1 | (kanban's) |
 | `[window]` | Line 2, the observable-window line: LINE-2 (A/B direct and staged consume, a weld producing), its two loaders and its drain. Its processes name `edge: edge2.line1`: EDGE 2's operator pacing (60 s release, 30 s loads, `shingoedge.edge2.yaml`) is the window under test, and that pacing is per Edge | EDGE 2 | STANDARD-L2 |
 | `[one-node]` | LINE-1N: a Sequential A/B consume line on one node with no partner (ALN_1N_01), two styles on two parts for a part change, one flat market (`SYN_1N_MARKET`) as both its inbound source and its outbound destination, and a loader per part. Nothing in it counts, reorders or asks a loader: it moves only when a person presses REQUEST or starts the part change | EDGE 1 | STANDARD-1N |
 | `[two-robot-home]` | LINE-2H: a two-robot consume line on one node (ALN_2H_01) whose inbound source, inbound staging and outbound destination are all its part's pinned home on one dedicated-positions loader, `PLK_2H` (a home per part, `PLK_2H_HA` and `PLK_2H_HB`, and one free buffer); two styles on two parts for a part change. No staging node: the supply robot waits at the home. Nothing in it counts, reorders or asks the loader: it moves only when a person presses REQUEST or starts the part change | EDGE 1 | STANDARD-2H |
@@ -55,21 +55,32 @@ must show the plant lasting the run before a number taken on it counts.
 
 - Every part is balanced, drained, loader-fed or IDLE (a loader whose part only a style
   not running consumes) but `[demo]`'s PANEL-A and PANEL-B; every pool holds its floor
-  (`SYN_STAMP` 9 empties against 5, `SYN_COMP` 16 against 7, `SMN_L2` 7 against 7) but
-  `SYN_MARKET`; every kanban stands at its want and every family at its pool.
+  by carrier type (`SYN_STAMP` 9 empties against 5, `SYN_COMP` 16 against 7, `SMN_L2` 7
+  against 6, `SYN_MARKET` STANDARD 16 against 16, with no margin, and 5 STANDARD-SM that
+  no draw there needs). Summed, `SYN_MARKET` stood 17 against 16 while its STANDARD was
+  4 short; Lane_21-22 hold the four (2026-11-22). Every kanban stands at its
+  want and every family at its pool.
+- simcalc `-carriers` fails a kanban that takes back more than it spends, and a kanban
+  that names no source and stands under demand × transit (10 minutes unless `-transit`)
+  of a type it spends. `PRESS-KANBAN` (2 of 2) and `WELD-KANBAN` (2 of 2) stand exactly
+  on that floor. The pull of a keeper with no source is in both pools' rates and in
+  no floor of the pool it leaves.
 - `[demo]`'s press-empties kanban is seeded to its family pools: the level is 4 STANDARD
   and 2 STANDARD-SM, and each pool adds the most positions each supported press runs
   in the family (8 and 6). Ten carts stand in its twelve positions and four on the
   presses, so the keeper is born quiet with two positions spare. Seeded at its level, as
   before, both families were born two short and the first tick borrowed.
-- Two `[demo]` lines stay red, both demo-sim's and both nameplate: the rate check's
-  PANEL-A/B STARVE, and the carrier check's `SYN_MARKET RATE DEFICIT 0.20/min — drains
-  regardless of size`. simcalc fails any pool whose spends exceed its frees, whatever
-  its stock; it costs WELD-1/2's ASSY carriers at their 6/min nameplate (0.30 bins/min
-  each out of `SYN_MARKET`) where their swap cadence draws about a third of it (the
-  PRESS-1 block of `shingoedge.dev.yaml`), and those carriers return through UNLOADER-A
-  into the press empties, a kanban with no source to send its surplus back by. The
-  measured tick rates are not retuned to the model. Re-measure before retuning.
+- One `[demo]` line stays red, demo-sim's and nameplate: the rate check's PANEL-A/B
+  STARVE. It costs WELD-1/2 at their 6/min nameplate where their swap cadence draws
+  about a third of it (the PRESS-1 block of `shingoedge.dev.yaml`). The measured tick
+  rates are not retuned to the model. Re-measure before retuning.
+- `P5-KANBAN`'s 45x48 pool is 36, ten over its minimum of 26 (2026-11-22): 12 small
+  stand against a floor of 10 (1.00 a minute, 10 minutes). At 26, two carts went round
+  for five presses and they starved for an empty.
+- UNLOADER-A returns ASSY's drained carriers to `SYN_MARKET`, where ASSY drew them
+  (2026-11-22). Into the press empties they were three STANDARD in for one drawn: the
+  kanban filled, and the carrier check's `SYN_MARKET RATE DEFICIT` was the other end
+  of the same edge.
 - `[one-node]`'s PART-1N-A reads NO-DRAIN on the rate check, by design: LINE-1N has no
   counter (a person calls), so nothing draws what its loader could make.
 - `[two-robot-home]`'s PART-2H-A reads NO-DRAIN on the rate check for the same reason

@@ -22,8 +22,8 @@ machinery.
 | `startupSweep` | `engine/threshold_monitor.go` | boot (`ThresholdMonitor.Run`) | one-shot, 3s after Start | evaluates every monitored place once, reading the open-episode set once for the pass; seeds the cold-start warm-up allowance. No rehydrate — the monitor keeps no copy |
 | `checkBindings` + debounce | `engine/threshold_monitor.go` | every eval path | per pass, 15s debounce | the single fire gate; emits the below-threshold signal |
 | `evaluatePayload` | `engine/threshold_monitor.go` | the callers below | per event | re-reads the authoritative sum (`decisionTotalFor` = `SystemUOPForPayload`), funnels to `checkBindings` |
-| `OnBinUOPDelta` | `engine/threshold_monitor.go` | Edge UOP delta | per delta | → `evaluatePayload` |
-| `OnBucketApplied` | `engine/threshold_monitor.go` | bucket delta | per delta | → `evaluatePayload` |
+| `OnBinUOPDelta` | `engine/threshold_monitor.go` | Edge UOP delta | per delta | → after-queue → `evaluatePayload` |
+| `OnBucketApplied` | `engine/threshold_monitor.go` | bucket delta | per delta | → after-queue → `evaluatePayload` |
 | `handleBinUpdated` | `engine/threshold_monitor.go` | `EventBinUpdated` | every bin move | → `evaluatePayload` |
 | `NoteSwapRequestContradiction` | `engine/threshold_monitor.go` | complex order received | per order | contradiction re-check |
 | `OnThresholdChanges` | `engine/threshold_monitor.go` | loader config edit | per registry change | clears debounce so a new threshold takes effect at once |
@@ -46,7 +46,8 @@ Every loop Core's `Engine.Start` starts, in the order it starts them.
 |---|---|---|---|---|
 | `afterQueue.run` | `shingo-core/engine/after.go` | `Engine.Start` | no ticker | run serves the queue until stop closes. |
 | `DriverStarter.StartDriver` | `shingo-core/fleet/fleet.go` | `Engine.Start` | set by the implementation | DriverStarter is an optional interface implemented by fleet backends whose driver goroutine must launch AFTER the engine's event handlers are wired (the sim driver, which emits FINISHED events immediately, would fire into a dead handler before wireEventHandlers). |
-| `Scanner.StartPeriodicSweep` | `shingo-core/fulfillment/scanner.go` | `Engine.Start` | 60s | StartPeriodicSweep runs the scanner every interval as a safety net. |
+| `Scanner.runPasses` | `shingo-core/fulfillment/scanner.go` | `Scanner.StartPeriodicSweep` | no ticker | runPasses is the one goroutine that runs triggered passes, one after another, until Stop. |
+| `Scanner.StartPeriodicSweep` | `shingo-core/fulfillment/scanner.go` | `Engine.Start` | 60s | StartPeriodicSweep starts the pass worker and the timer that triggers it every interval, as a safety net. |
 | `laneLivenessFloorLoop` | `shingo-core/engine/engine_background.go` | `Engine.Start` | 60s (`laneLivenessFloorInterval`) | laneLivenessFloorLoop is the lane liveness floor: the periodic pass over the two wait populations no other floor covers — gate-staged dwellers and compound legs Core has not yet handed to the fleet. |
 | `OrderTracker.Start` | `shingo-core/fleet/tracker.go` | `Engine.Start` | set by the implementation | OrderTracker tracks active vendor orders and emits status change events. |
 | `connectionHealthLoop` | `shingo-core/engine/engine_connection.go` | `Engine.Start` | 30s | connectionHealthLoop runs checkConnectionStatus every 30 seconds until the engine stops. |

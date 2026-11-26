@@ -2,6 +2,9 @@ package main
 
 import (
 	"fmt"
+	"maps"
+	"math"
+	"slices"
 	"sort"
 	"strings"
 
@@ -9,7 +12,8 @@ import (
 )
 
 // kanbans.go — what the carrier check needs to know about a kanban: its want is not its level,
-// and its pool per family must fit the line, the mix and its slots.
+// its pool per family must fit the line, the mix and its slots, and what a kept pool is held to
+// (no surplus inflow; with no source, demand × transit and the keeper's pull).
 //
 // THE WANT IS CORE'S: level + cover, the positions the running style's claims put on the line in
 // the type (store.KanbanPictureSQL, kanban.Level.Want). Read off the plant file here. A part
@@ -38,6 +42,21 @@ type kanbanView struct {
 	cartsAt    map[string]string            // seeded node → the cart's type
 	familyOf   map[string]string            // type → family code
 	zoneSlots  map[string]int               // zone → its slots, positions and lanes
+	noCarrier  map[string]bool              // part → declared no_bin_type
+	defaultTyp string                       // what a bin or part that names no type rides
+}
+
+// carrierOf is the carrier type a part's empties are, as the seeder types them:
+// its own, else the plant's first type. A part declared to have none, and a
+// claim that names no part, have no type to count (false).
+func (v *kanbanView) carrierOf(part string) (string, bool) {
+	if bt, ok := v.binTypeOf[part]; ok {
+		return bt, true
+	}
+	if part == "" || v.noCarrier[part] {
+		return "", false
+	}
+	return v.defaultTyp, true
 }
 
 func newKanbanView(plant *plantspec.Plant) *kanbanView {
@@ -45,13 +64,17 @@ func newKanbanView(plant *plantspec.Plant) *kanbanView {
 		plant: plant, binTypeOf: map[string]string{}, capOf: map[string]int64{},
 		seeded: map[string]map[string]int{}, stylesOf: map[string][]string{}, styleParts: map[string][]string{},
 		claimsOf: map[string][]plantspec.Claim{}, nodesOf: map[string][]string{}, cartsAt: map[string]string{},
-		familyOf: map[string]string{}, zoneSlots: map[string]int{},
+		familyOf: map[string]string{}, zoneSlots: map[string]int{}, noCarrier: map[string]bool{},
+	}
+	if len(plant.BinTypes) > 0 {
+		v.defaultTyp = plant.BinTypes[0]
 	}
 	for _, pl := range plant.Payloads {
 		v.capOf[pl.Code] = pl.UOPCapacity
 		if pl.BinType != "" {
 			v.binTypeOf[pl.Code] = pl.BinType
 		}
+		v.noCarrier[pl.Code] = pl.NoBinType
 	}
 	for _, bt := range plant.BinTypes {
 		// A type no family names is a family of one, coded by its own code.
@@ -304,8 +327,8 @@ func (v *kanbanView) families(g plantspec.Kanban) []familyLine {
 
 // reportKanbans prints the kanbans' wants, their families and THE CLOCK. It fails the check when a
 // family's file does not hold what its pool says, when a pool will not fit the line and the mix or
-// its slots, when a kanban starts below its want, or when a pool's rate deficit drains its stock
-// inside the run.
+// its slots, when a kanban starts below its want, or when a pool's rate deficit, after the pull of
+// a keeper with no source, drains its stock inside the run.
 func reportKanbans(plant *plantspec.Plant, plan carrierPlan, rate map[string]float64, runMins float64) bool {
 	if len(plant.Kanbans) == 0 {
 		return true
@@ -358,13 +381,17 @@ func reportKanbans(plant *plantspec.Plant, plan carrierPlan, rate map[string]flo
 	for _, c := range clock {
 		verdict := "balanced: nothing drains while its returns run"
 		if q := plan.pools[c.kanban]; q != nil {
-			if deficit := q.emptyDemand - q.emptySupply; deficit > 0.001 {
+			if deficit := q.deficit(); deficit > rateSlack {
 				if lasts := float64(c.stock) / deficit; lasts < runMins {
 					ok = false
 					verdict = fmt.Sprintf("RATE DEFICIT %.2f/min: gone at %.0f sim-min, inside the run", deficit, lasts)
 				} else {
 					verdict = fmt.Sprintf("rate deficit %.2f/min: lasts %.0f sim-min", deficit, lasts)
 				}
+			} else if over := q.surplus(); over > rateSlack {
+				verdict = fmt.Sprintf("fills: %.2f/min more comes back than it spends (its pool line fails)", over)
+			} else if q.pullIn > 0 {
+				verdict = fmt.Sprintf("fed: the keeper's pull of %.2f/min is the kanban's whole shortfall", q.pullIn)
 			}
 		}
 		fmt.Printf("  %-18s %-12s draws %.2f/min, stock %d → %.0f sim-min if its returns stop; %s\n",
@@ -374,4 +401,222 @@ func reportKanbans(plant *plantspec.Plant, plan carrierPlan, rate map[string]flo
 		fmt.Printf("  starves first: %s %s, at %.0f sim-min with its returns stopped\n", clock[0].kanban, clock[0].binType, clock[0].mins)
 	}
 	return ok
+}
+
+// ── WHAT A KEPT POOL IS HELD TO ──────────────────────────────────────────────
+
+const (
+	// rateSlack is the difference in carriers a minute the balances read as none.
+	rateSlack = 0.001
+	// floorSlack keeps a float's sum of tenths from adding a carrier to a floor.
+	floorSlack = 1e-9
+)
+
+// typeFlow is one carrier type's flow at one pool, in carriers a minute.
+type typeFlow struct {
+	spend     float64 // empties drawn
+	free      float64 // empties returned, at the consumers' nameplate
+	back      float64 // returned no faster than the part is filled
+	lent      float64 // pulled from here by keepers
+	keeperOut float64 // a named kanban's shortfall of the type, carried here
+	points    int     // stations drawing it here, each waiting on one
+}
+
+// typedKeeperOut spreads a named source's keeperOut over the types its kanban is
+// short of, in proportion, so the source's floor stands it in those types.
+func (q *poolPlan) typedKeeperOut(k *poolPlan, total float64) {
+	short := map[string]float64{}
+	sum := 0.0
+	for binType, t := range k.byType {
+		if d := t.spend - t.free; d > 0 {
+			short[binType] = d
+			sum += d
+		}
+	}
+	for binType, d := range short {
+		q.ofType(binType).keeperOut += total * d / sum
+	}
+}
+
+// plainVerdict judges a plain pool: its rate, and the floor of each carrier type
+// its stations draw, demand × transit and one per station. It answers the
+// verdict, the types' summed floor and whether the pool holds.
+func (q *poolPlan) plainVerdict(mins, net float64) (string, int, bool) {
+	var fails, held []string
+	if net < -rateSlack {
+		fails = append(fails, fmt.Sprintf("RATE DEFICIT %.2f/min — drains regardless of size", -net))
+	}
+	required := 0
+	for _, binType := range slices.Sorted(maps.Keys(q.byType)) {
+		t := q.byType[binType]
+		need := t.points
+		if inFlight := (t.spend + t.keeperOut) * mins; inFlight > floorSlack {
+			need += int(math.Ceil(inFlight - floorSlack))
+		}
+		if need == 0 {
+			continue
+		}
+		required += need
+		name := binType
+		if name == "" {
+			name = "untyped"
+		}
+		if stands := q.standing[binType]; stands < need {
+			fails = append(fails, fmt.Sprintf("%s SHORT BY %d: stands %d, needs %d", name, need-stands, stands, need))
+		} else {
+			held = append(held, fmt.Sprintf("%s stands %d, floor %d", name, stands, need))
+		}
+	}
+	if len(fails) > 0 {
+		return strings.Join(fails, "; "), required, false
+	}
+	if len(held) == 0 {
+		return "ok", required, true
+	}
+	return "ok; " + strings.Join(held, "; "), required, true
+}
+
+// keeperPull is one kanban's plant-wide search settling on one pool.
+type keeperPull struct {
+	from    string
+	binType string
+	perMin  float64
+}
+
+// typeFloor is what a kanban with no source stands of one type, and must.
+type typeFloor struct {
+	binType      string
+	stands, need int
+}
+
+func (q *poolPlan) ofType(binType string) *typeFlow {
+	t := q.byType[binType]
+	if t == nil {
+		t = &typeFlow{}
+		q.byType[binType] = t
+	}
+	return t
+}
+
+// familyShort is a pool's spends less its returns, per family.
+func (v *kanbanView) familyShort(q *poolPlan) map[string]float64 {
+	out := map[string]float64{}
+	for binType, t := range q.byType {
+		out[v.familyOf[binType]] += t.spend - t.free
+	}
+	return out
+}
+
+// keeperPulls settles the shortfall of each kanban that runs a keeper and names
+// no source on the pools its search reaches: seeded zones that are no kanban's
+// (bins.FencedNodesCTE fences a lineside kanban's own carts from another's ask)
+// and no closed circuit, for a type the kanban levels, and no more than comes
+// back of that type there past the pool's own draw. What finds no lender stays
+// the kanban's deficit.
+func (v *kanbanView) keeperPulls(pools map[string]*poolPlan) {
+	lenders := slices.DeleteFunc(sortedPools(pools), func(q *poolPlan) bool {
+		return !q.isZone || q.isKanban || q.isClosedLoop
+	})
+	for _, g := range v.plant.Kanbans {
+		q := pools[g.Group]
+		if q.sourced || len(g.Supports) == 0 {
+			continue
+		}
+		for _, lv := range g.Levels {
+			family := v.familyOf[lv.BinType]
+			for _, from := range lenders {
+				t := from.byType[lv.BinType]
+				if t == nil {
+					continue
+				}
+				n := min(q.short[family], t.back-t.spend-t.lent)
+				if n <= rateSlack {
+					continue
+				}
+				t.lent += n
+				from.pullOut += n
+				q.pullIn += n
+				q.short[family] -= n
+				q.pulls = append(q.pulls, keeperPull{from: from.name, binType: lv.BinType, perMin: n})
+			}
+		}
+	}
+}
+
+// surplus is what comes back to a kanban a minute past what its families spend.
+func (q *poolPlan) surplus() float64 {
+	total := 0.0
+	for _, short := range q.short {
+		total += max(0, -short)
+	}
+	return total
+}
+
+// deficit is what THE CLOCK runs a kanban down by. With a source named it is the
+// pool's own, as the source's keeperOut is. With none the pull is a term, and one
+// family's surplus makes up no other's shortfall.
+func (q *poolPlan) deficit() float64 {
+	own := q.emptyDemand - q.emptySupply
+	if q.sourced {
+		return own
+	}
+	return own - q.pullIn + q.surplus()
+}
+
+// floors is demand × transit of each type a kanban with no source spends. A part
+// with no carrier type contributes nothing, as it does to the want.
+func (q *poolPlan) floors(mins float64) []typeFloor {
+	if !q.isKanban || q.sourced || !q.isZone {
+		return nil
+	}
+	var out []typeFloor
+	for _, binType := range slices.Sorted(maps.Keys(q.byType)) {
+		if t := q.byType[binType]; binType != "" && t.spend > 0 {
+			out = append(out, typeFloor{binType: binType, stands: q.standing[binType],
+				need: int(math.Ceil(t.spend*mins - floorSlack))})
+		}
+	}
+	return out
+}
+
+// kanbanVerdict is a level-kept pool's line: under its level, taking in more
+// than it spends, or, with no source, standing under demand × transit. A
+// passing line shows each floor beside what stands, so a margin of none shows.
+func (q *poolPlan) kanbanVerdict(mins float64) (string, bool) {
+	var fails []string
+	if q.isZone && q.seededEmpty < q.levelWant {
+		fails = append(fails, fmt.Sprintf("BELOW LEVEL by %d — the keeper starts behind", q.levelWant-q.seededEmpty))
+	}
+	for _, family := range slices.Sorted(maps.Keys(q.short)) {
+		if over := -q.short[family]; over > rateSlack {
+			fails = append(fails, fmt.Sprintf("RATE SURPLUS %.2f/min of %s — no overflow, so it fills", over, family))
+		}
+	}
+	held := fmt.Sprintf("level-kept (want %d)", q.levelWant)
+	for _, f := range q.floors(mins) {
+		if f.stands < f.need {
+			fails = append(fails, fmt.Sprintf("%s UNDER ITS FLOOR by %d: stands %d, demand × transit %d",
+				f.binType, f.need-f.stands, f.stands, f.need))
+		}
+		held += fmt.Sprintf("; %s stands %d, floor %d", f.binType, f.stands, f.need)
+	}
+	if len(fails) > 0 {
+		return strings.Join(fails, "; "), false
+	}
+	return held, true
+}
+
+// reportPulls prints each pull and where it is charged.
+func reportPulls(pools []*poolPlan) {
+	headed := false
+	for _, q := range pools {
+		for _, pull := range q.pulls {
+			if !headed {
+				fmt.Printf("\n  KEEPER'S PULL (a kanban naming no source, capped at what comes back of the type)\n")
+				headed = true
+			}
+			fmt.Printf("    %s %s: %.3f/min from %s, charged to both rates; its transit is in %s's floor, not %s's\n",
+				q.name, pull.binType, pull.perMin, pull.from, q.name, pull.from)
+		}
+	}
 }

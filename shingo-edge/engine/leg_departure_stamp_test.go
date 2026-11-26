@@ -119,12 +119,12 @@ const placedBinID = int64(77)
 // exercise the stamp while leaving the second trigger untested.
 func (f *stampFixture) recordPlacement(t *testing.T) {
 	t.Helper()
-	f.eng.HandleUOPAdjustment(protocol.UOPAdjustment{
+	f.eng.HandleBinLanded(protocol.BinLanded{
 		BinID:        placedBinID,
 		CoreNodeName: f.claim.CoreNodeName,
-		NewRemaining: 40,
+		Count:        40,
 		Epoch:        1,
-		Bound:        true,
+		PlacedSeq:    testPlacedSeq.Add(1),
 	})
 	rt, err := f.db.GetProcessNodeRuntime(f.nodeID)
 	testutil.MustNoErr(t, err, "runtime after the bind")

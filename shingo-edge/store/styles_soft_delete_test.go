@@ -1,8 +1,12 @@
 package store
 
 import (
+	"encoding/json"
+	"maps"
+	"slices"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingoedge/store/processes"
 )
 
@@ -227,4 +231,22 @@ func containsStyle(list []processes.Style, id int64) bool {
 		}
 	}
 	return false
+}
+
+// TestStyleDeleteImpact_Keys pins the delete-impact route's JSON keys.
+func TestStyleDeleteImpact_Keys(t *testing.T) {
+	t.Parallel()
+	raw, err := json.Marshal(processes.StyleImpact{})
+	testutil.MustNoErr(t, err, "marshal")
+	var keys map[string]any
+	testutil.MustNoErr(t, json.Unmarshal(raw, &keys), "unmarshal")
+	got := slices.Sorted(maps.Keys(keys))
+	want := []string{
+		"changeover_node_tasks", "changeover_participants", "changeover_station_tasks",
+		"changeovers_from_detached", "changeovers_to", "claims", "counter_snapshots", "hourly_counts",
+		"name", "parts_counted", "reporting_points", "retired", "style_id", "total_deleted",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("keys:\n got  %v\n want %v", got, want)
+	}
 }

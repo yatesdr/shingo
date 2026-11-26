@@ -32,7 +32,8 @@ func TestKanbanPress5Plant_ValidAndCleanAtBirth(t *testing.T) {
 }
 
 // One shared unloader means one kanban: every window sends to it, it supports all five presses,
-// and its pools are the summed minimum with a slot for every cart.
+// and its pools are the summed minimum (26 and 22) with 45x48's ten spares for the windows
+// on top, and a slot for every cart.
 func TestKanbanPress5Plant_OneKanbanOverFivePresses(t *testing.T) {
 	t.Parallel()
 	p := loadKanbanPress5(t)
@@ -47,8 +48,8 @@ func TestKanbanPress5Plant_OneKanbanOverFivePresses(t *testing.T) {
 			}
 		}
 	}
-	if len(k.Supports) != 5 || k.Pools["45x48"] != 26 || k.Pools["CART-32"] != 22 || len(k.Sources) != 0 {
-		t.Errorf("the kanban = %+v, want supports the five presses, pools 26 and 22, no sources", k)
+	if len(k.Supports) != 5 || k.Pools["45x48"] != 36 || k.Pools["CART-32"] != 22 || len(k.Sources) != 0 {
+		t.Errorf("the kanban = %+v, want supports the five presses, pools 36 and 22, no sources", k)
 	}
 	for _, l := range k.Levels {
 		if l.Want != 2 {

@@ -377,7 +377,8 @@ func main() {
 	// ── Messaging (Kafka) ───────────────────────────────────────────────
 	// The freeze alarm (plant build): the inbound consumer's handler, the
 	// scan lock and the after-emit queue's drain each mark their turns; a turn past 30 s logs one entry with the
-	// goroutine dump and shows on the Core Health strip. Alarm only.
+	// goroutine dump and shows on the Core Health strip, and so does the scan
+	// worker stopped or one pass running long (Engine.WatchScanWorker). Alarm only.
 	watch := liveness.New(log.Printf)
 	watchStop := make(chan struct{})
 	defer close(watchStop)
@@ -421,8 +422,9 @@ func main() {
 		msgClient.Close()
 		eng.Stop()
 	}()
-	eng.StartScanProbe(watch.Loop("the scan pass"))
+	eng.StartScanProbe(watch.Loop("the scan lock"))
 	eng.WatchAfterQueue(watch.Loop("the after-emit queue"))
+	eng.WatchScanWorker(watch)
 	go watch.Run(watchStop)
 	if cfg.Sim.Enabled {
 		simWatch(eng) // sim_watch_*.go (sim build) / sim_disabled.go (!sim build)
@@ -476,6 +478,7 @@ func main() {
 	coreDataService.SetThresholdMonitor(eng.ThresholdMonitor())
 	if sm := eng.SourceabilityMonitor(); sm != nil {
 		coreDataService.SetSourcingReport(sm.StationReport)
+		sm.SetSentFunc(coreDataService.SourcingSent)
 	}
 	// The plant clock, configured once here and inherited by every edge at this
 	// site rather than typed into each box's yaml. The zone Core was explicitly
@@ -492,6 +495,8 @@ func main() {
 	// The Edges page shows each station's feed flags (a feed that will not
 	// converge); the send records behind them live in the data service.
 	eng.SetEdgeFeedFlagsFunc(coreDataService.EdgeFeedFlags)
+	// A removed station's feeds state is in the data service's memory.
+	eng.SetStationRemovedFunc(coreDataService.StationRemoved)
 	// A known containment write (a flag, a bin hold, a diverted bin stamped on
 	// arrival) pushes the containment snapshot to every Edge at once.
 	eng.SetContainmentChangedFunc(coreDataService.ContainmentChanged)

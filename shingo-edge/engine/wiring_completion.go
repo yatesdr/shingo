@@ -735,8 +735,8 @@ func (e *Engine) unloaderPullsCovered(l *domain.Loader, payloads []domain.Payloa
 }
 
 // handleNormalReplenishment handles standard retrieve/complex order completion.
-// Cache binding is owned by handleNodeOrderDelivered — the delivered
-// bin's authoritative UOP arrives on its OrderDelivered envelope and
+// Cache binding is owned by the landing (HandleBinLanded) — the placed
+// bin's authoritative UOP arrives on its landing and
 // seeds active_bin_id + remaining_uop_cached. Confirm only does
 // order-pointer bookkeeping for manual_swap nodes.
 func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {

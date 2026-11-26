@@ -4742,14 +4742,16 @@ const SET_BOXES = [['positions', 'Positions', 'the spots this process works']].c
 // Settings' Positions and routing. Each is S.setPicks[key] = {pid, api}, the
 // pick for process pid (0 for one not made yet). What a box may take is its
 // field (setPickField):
-//   - Positions: a node another process holds is greyed with its name; a
+//   - Positions: a node another process holds is greyed with its name, and a
+//     node another station claims with that station's (claimedElsewhere); a
 //     group's row folds its nodes, which are positions one at a time.
 //   - Inbound and Outbound: a position of this process is greyed (every flow
 //     on it may use it already), and a group's members are not drawn: where
 //     Core picks, a source or destination names the group (legExclusion).
 //   - Staging: the same, except that a staging spot names the exact node, so
 //     a group's nodes fold under it, pickable once shown.
-// A node another process holds is behind "In use by other processes".
+// A node another process holds, here or on another station, is behind "In use
+// by other processes".
 //
 // TICKING A NODE INTO POSITIONS TAKES IT OUT OF THE ROLES (as the sheet did
 // before it was shared): one node is a position or a routing name, never both
@@ -4762,10 +4764,24 @@ function setPickValue(key, box) {
     return sp ? sp.api.value(box) : [];
 }
 
-// heldElsewhere: another process holds name as a position, and no Core
-// loader shares it (a shared loader window may be on several).
+// heldElsewhere: another process holds name as a position here, or another
+// station claims it (claimedElsewhere), and no Core loader shares it (a shared
+// loader window may be on several).
 function heldElsewhere(name, pid) {
-    return (S.livePositions || []).some(n => n.core_node_name === name && n.process_id !== pid) && !sharedLoaderNode(name);
+    return ((S.livePositions || []).some(n => n.core_node_name === name && n.process_id !== pid) ||
+        !!claimedElsewhere(name, pid)) && !sharedLoaderNode(name);
+}
+
+// claimedElsewhere is the other stations that claim name, as Core's node list
+// names them (claimed_by), or ''. It never counts against a position process
+// pid already has: that row stays tickable, so it can be taken off. It is the
+// picker's alone: no save is refused on it.
+function claimedElsewhere(name, pid) {
+    const n = (S.coreNodes || []).find(c => c.name === name);
+    if (!n || !n.claimed_by) return '';
+    if (positionScreen(name, pid) ||
+        (S.livePositions || []).some(p => p.core_node_name === name && p.process_id === pid)) return '';
+    return n.claimed_by;
 }
 
 // A group is never a position itself: in the Positions box its row is greyed
@@ -6056,9 +6072,9 @@ async function bindLoaderBoard(key) {
 // that works this process is one row: its name, how many positions it claims
 // and when it last answered, and its positions as the shared picker's chips.
 // A position is one screen's: picking one that is on a sibling screen moves it
-// there. + Add a screen and a screen's Edit open the screen sheet (its name and
-// note); Open is the screen itself. A draft, saved by the one Save
-// (SETTINGS_SECTIONS.positions).
+// there. + Add a screen and a screen's Rename open the screen sheet (its name
+// and note); Open the screen is the screen itself (screenField). A draft,
+// saved by the one Save (SETTINGS_SECTIONS.positions).
 //
 // POSITIONS COME BEFORE THE SCREEN (owner's setup order, 2026-11-14): a
 // process's positions are its own, and the ones no screen has taken yet are a
@@ -6230,18 +6246,35 @@ function screenKey(id) { return 'scr-' + id; }
 // they are set). Taking one off here would leave Core's loader with a window
 // no screen works.
 function screenRow(st) {
-    const h = healthOf(st);
     const unread = !(String(st.id) in S.stationNodes);
-    const core = coreBoards(process());
-    return '<div class="pd-sfld pd-scrrow"><label>' + esc(st.name) +
-        '<small>' + esc((unread ? '' : nOf(pickerValue(screenKey(st.id)).length, 'position') + ' · ') + h.text) + '</small>' +
-        '<span class="pd-scracts"><button class="pd-dimlink" data-act="screen-edit" data-station="' + st.id + '">Edit</button>' +
-        '<a class="pd-dimlink" href="/operator/station/' + st.id + '">Open</a></span></label>' +
-        '<div class="v col">' + (unread
-            ? '<p class="pd-note">This screen’s positions could not be read, so they cannot be changed here. Reload the page.</p>'
-            : core ? '<div class="picker-chips">' + pickerValue(screenKey(st.id)).map(n =>
-                '<span class="picker-chip">' + esc(n) + '</span>').join('') + '</div>'
-                : pickerBox(screenKey(st.id))) + '</div></div>';
+    const held = unread ? null : pickerValue(screenKey(st.id));
+    return screenField(st, held, unread || coreBoards(process()) ? '' : pickerBox(screenKey(st.id)));
+}
+
+// screenField is ONE SCREEN AS SETTINGS DRAWS IT, on a line's Positions and
+// routing (drawScreenLines) and on a loader's Screens and positions
+// (screenRow) alike (owner, 2026-11-24: "why does it look different from the
+// bin loader or unloader one"). The two were drawn apart, a sentence on one
+// and a row on the other, each with Edit and Open as dim text; an engineer
+// looking for where a screen is renamed found neither.
+//
+// The label says what the row is, so the word "screen" is on a card whose
+// heading does not have it. Its name is the value, and Rename (the screen
+// sheet: its name and note) and Open the screen are buttons beside it. Under
+// them, its positions: held as chips with no × (a line picks its positions in
+// the box above, a loader's are Core's windows), or pick, a picker in their
+// place. held is null for a screen whose positions could not be read.
+// Pinned by "a screen is drawn the same on a line and on a loader".
+function screenField(st, held, pick) {
+    const body = held === null
+        ? '<p class="pd-note">This screen’s positions could not be read, so they cannot be changed here. Reload the page.</p>'
+        : pick || (held.length ? '<div class="picker-chips">' + held.map(n => '<span class="picker-chip">' + esc(n) + '</span>').join('') + '</div>' : '');
+    return '<div class="pd-sfld pd-scrrow pd-screen"><label>Operator screen' +
+        '<small>' + esc((held === null ? '' : nOf(held.length, 'position') + ' · ') + healthOf(st).text) + '</small></label>' +
+        '<div class="v col"><div class="pd-scrhead"><b>' + esc(st.name) + '</b>' +
+        '<span class="pd-scracts"><button class="pd-btn" data-act="screen-edit" data-station="' + st.id + '">Rename</button>' +
+        '<a class="pd-btn" href="/operator/station/' + st.id + '">Open the screen</a></span></div>' +
+        body + '</div></div>';
 }
 
 // loaderWindows is the loader windows Core knows about with no screen on this
@@ -6256,13 +6289,21 @@ function loaderWindows() {
 // ── Settings · Positions and routing ─────────────────────────────────────────
 //
 // THE SAME PICK AS ADD PROCESS, on the page's one Save (owner, 2026-11-15:
-// "that pick for the nodes was really good the plants like it"). Under it,
-// the screen. A line has one (owner: "lines shouldnt have two screens"), made
-// with the process, and a position picked here goes on it. A line with none
-// offers "+ Add a screen", which takes the positions on no screen. A line
-// that has two from before (two at SPR) shows each with its positions as they
-// are; a new position goes on the first, and nothing here moves one between
-// them. A loader's process keeps its screens' rows (screensSection).
+// "that pick for the nodes was really good the plants like it"). A line has
+// one screen (owner: "lines shouldnt have two screens"), made with the
+// process, and a position picked here goes on it. A line with none offers
+// "+ Add a screen", which takes the positions on no screen. A line that has
+// two from before (two at SPR) shows each with its positions as they are; a
+// new position goes on the first, and nothing here moves one between them.
+// A loader's process keeps its screens' rows (screensSection); a screen is
+// drawn the same on both (screenField).
+//
+// THE SCREEN IS ABOVE THE PICK, NOT UNDER IT (owner, 2026-11-24: "where do
+// you change the name ... I dont see it"). The pick lists every node in the
+// plant, so the screen's row under it was off the page: on the big-line
+// fixture (TestBigLineShots, bigline-settings.png) it was below the 4200 px
+// the shot is tall, and HOP's lines' rows were not found by the engineer who
+// asked for them. Pinned by "a line's screen is drawn above the pick".
 // A routing name may sit in several roles (a buffer is inbound and outbound),
 // never in a role and on a screen (ErrRoutingNodeIsPosition). Inside a role
 // the order picked is the order saved, the first a new position's default;
@@ -6271,8 +6312,8 @@ function loaderWindows() {
 function positionsRoutingSection() {
     const way = waypointNames();
     return '<div class="pd-sect"><h2>Positions and routing</h2><span class="pd-dim">the same pick as Add process</span></div>' +
-        '<div class="pd-sphost" id="sp-' + ST_SET + '"></div>' +
         '<div class="pd-scrlines" id="pd-scrlines"></div>' +
+        '<div class="pd-sphost" id="sp-' + ST_SET + '"></div>' +
         loaderWindows() +
         (routingUnread() ? '' : ROUTING_GROUPS.map(allOffLine).join('')) +
         (way.length ? '<p class="pd-note">Waypoints, from the map, on the shortest supply path (not editable): ' + esc(way.join(' · ')) + '</p>' : '') +
@@ -6310,10 +6351,10 @@ function settingsSetMoved() {
     if (S.stShell && S.stShell.pid === S.processID) S.stShell.page.update();
 }
 
-// drawScreenLines is the line under the pick: each screen with what it will
-// hold once saved, a chip per position, its health, Edit and Open; the
-// positions on no screen, with "Put them on <screen>" for each screen; and
-// "+ Add a screen" on a line that has none.
+// drawScreenLines is what is under the pick: each screen as its row
+// (screenField, the row a loader's page draws), holding what it will hold once
+// saved; the positions on no screen, with "Put them on <screen>" for each
+// screen; and "+ Add a screen" on a line that has none.
 function drawScreenLines() {
     const el = $('pd-scrlines');
     if (!el) return;
@@ -6321,18 +6362,7 @@ function drawScreenLines() {
     const names = setPickValue(ST_SET, 'positions');
     const d = screensDraft(names, S.looseOnto);
     const loose = d.none || [];
-    const lines = screens.map(st => {
-        const unread = !(String(st.id) in S.stationNodes);
-        const held = unread ? [] : (d[st.id] || []);
-        const n = held.length;
-        return '<div class="pd-scrline"><span>Screen <b>' + esc(st.name) + '</b> ' +
-            (unread ? '· its positions could not be read, so they cannot be changed here. Reload the page.'
-                : (screens.length === 1 && n && !loose.length ? 'holds all ' + nOf(n, 'position') : 'holds ' + nOf(n, 'position'))) +
-            ' · ' + esc(healthOf(st).text) + '</span>' +
-            '<span class="pd-scracts"><button class="pd-dimlink" data-act="screen-edit" data-station="' + st.id + '">Edit</button>' +
-            '<a class="pd-dimlink" href="/operator/station/' + st.id + '">Open</a></span></div>' +
-            (n ? '<div class="setpick-chips pd-scrchips">' + held.map(p => '<span class="setpick-chip">' + esc(p) + '</span>').join('') + '</div>' : '');
-    });
+    const lines = screens.map(st => screenField(st, String(st.id) in S.stationNodes ? (d[st.id] || []) : null, ''));
     // "PUT THEM ON" FOR EACH SCREEN: on a line with two, the positions on no
     // screen are offered to either, as main's checklist on each screen did,
     // and once they are going on one, to the others still.
@@ -6681,13 +6711,14 @@ function positionScreen(name, pid) {
 }
 
 // positionHeld is why name cannot be a position of process pid: another
-// process holds it, and no Core loader shares it (shared_loader).
+// process holds it, here or (by its claim) on another station, and no Core
+// loader shares it (shared_loader).
 function positionHeld(name, pid) {
     if (positionScreen(name, pid)) return '';
     const rows = (S.livePositions || []).filter(n => n.core_node_name === name);
     if (rows.some(n => n.process_id === pid)) return '';
-    const other = rows[0];
-    return other && !sharedLoaderNode(name) ? 'on ' + other.process_name : '';
+    const holder = rows.length ? rows[0].process_name : claimedElsewhere(name, pid);
+    return holder && !sharedLoaderNode(name) ? 'on ' + holder : '';
 }
 
 // THE COUNTED-AT DRAFT. S.counted is each position's station counter id, 0 for

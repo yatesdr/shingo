@@ -168,7 +168,7 @@ var waitPopulations = []populationReleaser{
 	{
 		population: PopAcquiring,
 		owner:      OwnerCore,
-		redriver:   "fulfillment.Scanner.RunOnce",
+		redriver:   "fulfillment.Scanner.Trigger",
 		// EventBinEnteredTransit was subscribed (engine/wiring.go) and missing
 		// here: a lift frees the slot a queued order waits on.
 		events: []string{

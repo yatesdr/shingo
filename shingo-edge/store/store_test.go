@@ -930,8 +930,9 @@ func TestOrders_UpdateMutations(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateOrderStepsJSON(id, `{"step":1}`), "steps")
 
 	// Staged expire
-	exp := time.Now().UTC().Add(10 * time.Minute)
-	testutil.MustNoErr(t, db.UpdateOrderStagedExpireAt(id, &exp), "expire")
+	// Nothing writes it any more; an old row's value is still read.
+	_, err := db.Exec(`UPDATE orders SET staged_expire_at = '2026-04-19 12:10:00' WHERE id = ?`, id)
+	testutil.MustNoErr(t, err, "an old row's expire")
 
 	got, err := db.GetOrder(id)
 	if err != nil {
@@ -954,13 +955,6 @@ func TestOrders_UpdateMutations(t *testing.T) {
 	}
 	if got.StagedExpireAt == nil {
 		t.Error("staged_expire_at should be populated")
-	}
-
-	// Clear expire
-	testutil.MustNoErr(t, db.UpdateOrderStagedExpireAt(id, nil), "clear expire")
-	got2, _ := db.GetOrder(id)
-	if got2.StagedExpireAt != nil {
-		t.Errorf("staged_expire_at after clear = %v", got2.StagedExpireAt)
 	}
 }
 

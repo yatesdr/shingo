@@ -124,10 +124,12 @@ func armPullback(t *testing.T) *pullbackFixture {
 }
 
 func deliverTo(eng *Engine, order *storeorders.Order, nodeID int64) {
-	bid, uop := int64(77), 40
+	bid := int64(77)
+	eng.HandleBinLanded(protocol.BinLanded{BinID: bid, CoreNodeName: order.DeliveryNode, Count: 40,
+		OrderUUID: order.UUID, PlacedSeq: 1})
 	eng.handleNodeOrderDelivered(OrderDeliveredEvent{
 		OrderID: order.ID, OrderUUID: order.UUID, OrderType: order.OrderType,
-		ProcessNodeID: &nodeID, BinID: &bid, BinUOP: &uop,
+		ProcessNodeID: &nodeID, BinID: &bid, FromNotice: true,
 	})
 }
 

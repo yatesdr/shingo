@@ -109,7 +109,7 @@ func sentDataBody(t *testing.T, h *Handlers, subject string, body any) {
 
 // The page's register carries the Edge's schema version, the one its
 // heartbeater's register sends (engine.Engine.SchemaVersion): on a migrated
-// database at or above protocol.EdgeSchemaBinLanded. A register without it
+// database at or above v20, where a v0.19.0 Core sends landings. A register without it
 // was stored at Core as v0, and Core sent the station a Bound in place of
 // each landing until its next real register (end to end:
 // TestScenario_TheDebugPagesRegisterKeepsTheStationsLandings).
@@ -122,13 +122,14 @@ func TestApiSendManualMessage_EdgeRegister_CarriesTheEdgesSchemaVersion(t *testi
 	var reg protocol.EdgeRegister
 	sentDataBody(t, h, protocol.SubjectEdgeRegister, &reg)
 	want := dbOf(h).AppliedSchemaVersion()
-	if want < protocol.EdgeSchemaBinLanded {
-		t.Fatalf("the test database stands at v%d, below protocol.EdgeSchemaBinLanded (%d): the check would pass on a demoting value",
-			want, protocol.EdgeSchemaBinLanded)
+	const v019LandingSchema = 20
+	if want < v019LandingSchema {
+		t.Fatalf("the test database stands at v%d, below a v0.19.0 Core's landings (%d): the check would pass on a demoting value",
+			want, v019LandingSchema)
 	}
 	if reg.SchemaVersion != want {
 		t.Errorf("the page's register carries schema_version %d, want the Edge's %d (engine SchemaVersion): Core keeps "+
-			"it and sends a station below %d a Bound in place of a landing", reg.SchemaVersion, want, protocol.EdgeSchemaBinLanded)
+			"it and a v0.19.0 Core sends a station below %d a Bound in place of a landing", reg.SchemaVersion, want, v019LandingSchema)
 	}
 	if reg.Version != "dev" || reg.Instance != "" {
 		t.Errorf("the page's register carries version %q and instance %q, want the typed dev and none", reg.Version, reg.Instance)
@@ -144,9 +145,9 @@ func TestApiSendManualMessage_EdgeHeartbeat_IsTheHeartbeatersOwn(t *testing.T) {
 	t.Parallel()
 	h, router := newDiagnosticsManualRouter(t)
 	own := &protocol.EdgeHeartbeat{
-		StationID: "test.station", Timezone: "America/Chicago",
-		Feeds: map[string]string{protocol.FeedBins: "bins-digest"},
-		Owned: map[string]string{protocol.OwnedClaims: "claims-digest"},
+		Timezone: "America/Chicago",
+		Feeds:    map[string]string{protocol.FeedBins: "bins-digest"},
+		Owned:    map[string]string{protocol.OwnedClaims: "claims-digest"},
 	}
 	h.orchestration.(*stubEngine).heartbeat = own
 

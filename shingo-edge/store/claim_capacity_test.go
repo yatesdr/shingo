@@ -45,19 +45,11 @@ func capacityCensusOf(t *testing.T, plant string) capacityCensus {
 	f := readPlantFixture(t, plant)
 	loadPlantFixture(t, db, f)
 
-	// The stored copy, straight off the row, before anything resolves it.
+	// The copy the claim row used to store (Edge v60 dropped the column), off
+	// the fixture's rows.
 	stored := map[int64]int{}
-	rows, err := db.Query(`SELECT id, uop_capacity FROM style_node_claims`)
-	if err != nil {
-		t.Fatalf("read stored capacities: %v", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id, cap int64
-		if err := rows.Scan(&id, &cap); err != nil {
-			t.Fatalf("scan stored capacity: %v", err)
-		}
-		stored[id] = int(cap)
+	for _, row := range f.StyleNodeClaims {
+		stored[fixtureInt(row["id"])] = int(fixtureInt(row["uop_capacity"]))
 	}
 
 	var c capacityCensus
@@ -166,17 +158,12 @@ func TestClaimCapacity_UnknownPayloadResolvesToZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upsert claim: %v", err)
 	}
-	// Write a non-zero number into the dead column directly: if resolution
-	// ever falls back to the stored copy, this is the value that would show up.
-	if _, err := db.Exec(`UPDATE style_node_claims SET uop_capacity = 9999 WHERE id = ?`, id); err != nil {
-		t.Fatalf("plant a stale copy: %v", err)
-	}
 	claim, err := processes.GetClaim(db.DB, id)
 	if err != nil {
 		t.Fatalf("get claim: %v", err)
 	}
 	if claim.UOPCapacity != 0 {
-		t.Errorf("unknown payload resolved to %d, want 0 — the stored copy must not be a fallback", claim.UOPCapacity)
+		t.Errorf("unknown payload resolved to %d, want 0 — nothing but the catalog may answer", claim.UOPCapacity)
 	}
 }
 
@@ -279,59 +266,6 @@ func TestClaimPiecesPerCycle_AgreesWithTheCountExamples(t *testing.T) {
 		if want := protocol.UOPRatio(ex.Lines); claim.PiecesPerCycle != want || want != ex.Ratio {
 			t.Errorf("%s: the claim read gives %d, protocol.UOPRatio %d, the example %d", ex.Name, claim.PiecesPerCycle, want, ex.Ratio)
 		}
-	}
-}
-
-// TestClaimCapacity_StoredColumnIsNoLongerWritten — the column stays in the
-// table (dropping it is its own change, with its own rebuild risk) but nothing
-// writes it any more, so it reads as its DDL default on every row the code
-// creates. A write reappearing here is the drift mechanism coming back.
-func TestClaimCapacity_StoredColumnIsNoLongerWritten(t *testing.T) {
-	db := testDB(t)
-	seedCapacityProcess(t, db)
-	if err := catalog.UpsertCatalog(db.DB, &catalog.CatalogEntry{
-		ID: 1, Name: "Part A", Code: "PART-A", UOPCapacity: 1320,
-	}); err != nil {
-		t.Fatalf("seed catalog: %v", err)
-	}
-
-	// UOPCapacity is set deliberately: the input still carries the field (the
-	// admin API's shape is unchanged) and the point is that the store ignores
-	// it rather than persisting it.
-	in := processes.NodeClaimInput{
-		StyleID:             1,
-		CoreNodeName:        "PLN_01",
-		Role:                "produce",
-		SwapMode:            "two_robot",
-		PayloadCode:         "PART-A",
-		UOPCapacity:         4321,
-		InboundSource:       "SMN_001",
-		InboundStaging:      "STG_001",
-		OutboundDestination: "SMN_001",
-		PairedCoreNode:      "PLN_02",
-		Source:              "hmi",
-	}
-	id, err := processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, in)
-	if err != nil {
-		t.Fatalf("insert: %v", err)
-	}
-	assertStoredCapacityZero(t, db, id, "after INSERT")
-
-	// And on the UPDATE arm, which is a different column list.
-	if _, err := processes.UpsertClaim(db.DB, domain.CoreNodeKinds{}, in); err != nil {
-		t.Fatalf("update: %v", err)
-	}
-	assertStoredCapacityZero(t, db, id, "after UPDATE")
-}
-
-func assertStoredCapacityZero(t *testing.T, db *DB, id int64, when string) {
-	t.Helper()
-	var stored int
-	if err := db.QueryRow(`SELECT uop_capacity FROM style_node_claims WHERE id = ?`, id).Scan(&stored); err != nil {
-		t.Fatalf("read stored capacity %s: %v", when, err)
-	}
-	if stored != 0 {
-		t.Errorf("%s the dead uop_capacity column holds %d, want 0 — something is still writing it", when, stored)
 	}
 }
 

@@ -90,20 +90,20 @@ var statusEventSubscribers = map[string]string{
 // delivery's follow-ons, once both halves of it are in). Plus the delivered
 // fallback (an order.delivered for an order with no Edge row).
 var statusEventEmitters = map[string]string{
-	"engine/adapters.go:EmitOrderCompleted EventOrderCompleted":               "Event literal",
-	"engine/adapters.go:EmitOrderDelivered EventOrderDelivered":               "Event literal",
-	"engine/adapters.go:EmitOrderDeliveredFallback EventOrderDelivered":       "Event literal",
-	"engine/adapters.go:EmitOrderFailed EventOrderFailed":                     "Event literal",
-	"engine/adapters.go:EmitOrderStatusChanged EventOrderStatusChanged":       "Event literal",
-	"orders/lifecycle_service.go:applyTransition EmitOrderCompleted":          "order emitter call",
-	"orders/lifecycle_service.go:applyTransition EmitOrderDelivered":          "order emitter call",
-	"orders/lifecycle_service.go:applyTransition EmitOrderFailed":             "order emitter call",
-	"orders/lifecycle_service.go:applyTransition EmitOrderStatusChanged":      "order emitter call",
-	"orders/core_word.go:coreMoved EmitOrderCompleted":                        "order emitter call",
-	"orders/core_word.go:coreMoved EmitOrderFailed":                           "order emitter call",
-	"orders/core_word.go:coreMoved EmitOrderStatusChanged":                    "order emitter call",
-	"orders/core_word.go:deliveredFollowOns EmitOrderDelivered":               "order emitter call",
-	"orders/manager_status.go:handleDeliveredWire EmitOrderDeliveredFallback": "order emitter call",
+	"engine/adapters.go:EmitOrderCompleted EventOrderCompleted":                 "Event literal",
+	"engine/adapters.go:EmitOrderDelivered EventOrderDelivered":                 "Event literal",
+	"engine/adapters.go:EmitOrderDeliveredFallback EventOrderDelivered":         "Event literal",
+	"engine/adapters.go:EmitOrderFailed EventOrderFailed":                       "Event literal",
+	"engine/adapters.go:EmitOrderStatusChanged EventOrderStatusChanged":         "Event literal",
+	"orders/lifecycle_service.go:applyTransition EmitOrderCompleted":            "order emitter call",
+	"orders/lifecycle_service.go:applyTransition EmitOrderDelivered":            "order emitter call",
+	"orders/lifecycle_service.go:applyTransition EmitOrderFailed":               "order emitter call",
+	"orders/lifecycle_service.go:applyTransition EmitOrderStatusChanged":        "order emitter call",
+	"orders/core_word.go:coreMoved EmitOrderCompleted":                          "order emitter call",
+	"orders/core_word.go:coreMoved EmitOrderFailed":                             "order emitter call",
+	"orders/core_word.go:coreMoved EmitOrderStatusChanged":                      "order emitter call",
+	"orders/core_word.go:deliveredFollowOns EmitOrderDelivered":                 "order emitter call",
+	"orders/manager_status.go:HandleDeliveredNotice EmitOrderDeliveredFallback": "order emitter call",
 }
 
 // TestStatusEventCensus_Subscribers pins every subscriber of a status-derived

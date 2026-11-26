@@ -3,7 +3,6 @@ package www
 import (
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -32,13 +31,11 @@ import (
 // engine/claim_leg_writers_test.go.
 //
 // Outcomes: "saved" means the lane is stored; "refused" means the write was
-// turned down and nothing landed; "skipped" means a derive wrote no row for
-// the lane and still succeeded.
+// turned down and nothing landed.
 
 const (
 	legSaved   = "saved"
 	legRefused = "refused"
-	legSkipped = "skipped"
 )
 
 // writersCore is Core's node list for the census: a group, one of its lanes,
@@ -147,20 +144,6 @@ func storedLane(t *testing.T, db *store.DB, sid int64, leg string) bool {
 	testutil.MustNoErr(t, err, "list claims")
 	for _, c := range claims {
 		if legValue(c, leg) == "LL-LANE" {
-			return true
-		}
-	}
-	return false
-}
-
-// routingHasLane reports whether the process's routing set holds the lane in
-// any role.
-func routingHasLane(t *testing.T, db *store.DB, pid int64) bool {
-	t.Helper()
-	rows, err := db.ListRoutingNodes(pid)
-	testutil.MustNoErr(t, err, "list routing nodes")
-	for _, r := range rows {
-		if r.CoreNodeName == "LL-LANE" {
 			return true
 		}
 	}
@@ -370,52 +353,6 @@ func TestRoutingWriters_ALaneInEachRole(t *testing.T) {
 			}
 			if got != row.want {
 				t.Errorf("%s with a lane as %s: %s, want %s", row.writer, row.leg, got, row.want)
-			}
-		})
-	}
-}
-
-// deriveWriterCensus is the routing backfill, per claim leg it reads. Since
-// pick-a-part unit A the only backfill is migration v25, which runs at open
-// before Core has been heard from: no lane is known, so a lane on a stored
-// claim is derived as the boot call used to derive it. (The Processes page's
-// re-derive, which skipped lanes, had no client and was deleted with it.)
-var deriveWriterCensus = []legCensusRow{
-	{"migration v25", "inbound_source", legSaved},
-	{"migration v25", "outbound_destination", legSaved},
-	{"migration v25", "inbound_staging", legSaved},
-	{"migration v25", "outbound_staging", legSaved},
-}
-
-// TestRoutingDerive_ALaneOnEachLeg is the census of the backfill. A database
-// that predates the routing set is made by seeding the claim, forgetting v25
-// ran, and opening it again — which is what an aged plant DB looks like to the
-// migration runner.
-func TestRoutingDerive_ALaneOnEachLeg(t *testing.T) {
-	t.Parallel()
-	for _, row := range deriveWriterCensus {
-		t.Run(row.writer+"/"+row.leg, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "aged.db")
-			db, err := store.Open(path)
-			testutil.MustNoErr(t, err, "open a database")
-			pid, err := db.CreateProcess("DW-Line", "", "", "", false)
-			testutil.MustNoErr(t, err, "create process")
-			sid, err := db.CreateStyle("DW-Style", "", pid)
-			testutil.MustNoErr(t, err, "create style")
-			_, err = db.UpsertStyleNodeClaim(domain.CoreNodeKinds{}, withLaneOn(cleanLegClaim(sid), row.leg))
-			testutil.MustNoErr(t, err, "seed a stored lane claim")
-			_, err = db.Exec(`DELETE FROM schema_migrations WHERE version = 25`)
-			testutil.MustNoErr(t, err, "forget v25")
-			testutil.MustNoErr(t, db.Close(), "close")
-			db, err = store.Open(path)
-			testutil.MustNoErr(t, err, "reopen: migration v25 runs")
-			t.Cleanup(func() { db.Close() })
-			got := legSkipped
-			if routingHasLane(t, db, pid) {
-				got = legSaved
-			}
-			if got != row.want {
-				t.Errorf("%s with a lane on %s: %s, want %s", row.writer, row.leg, got, row.want)
 			}
 		})
 	}

@@ -160,7 +160,7 @@ func TestDelivered_ComplexOrderBindsActiveBin(t *testing.T) {
 	// this node.
 	eng.HandleBinLanded(protocol.BinLanded{BinID: bid, CoreNodeName: node.CoreNodeName, PlacedSeq: 1})
 	eng.Events.Emit(Event{Type: EventOrderDelivered, Payload: OrderDeliveredEvent{
-		OrderID: orderID, OrderType: orders.TypeComplex, ProcessNodeID: &nodeID, BinID: &bid, LandingSent: true,
+		OrderID: orderID, OrderType: orders.TypeComplex, ProcessNodeID: &nodeID, BinID: &bid, FromNotice: true,
 	}})
 
 	rt, err := db.GetProcessNodeRuntime(nodeID)
@@ -183,7 +183,7 @@ func TestDelivered_ComplexOrderBindsActiveBin(t *testing.T) {
 	// Its bin landed at FILLED-STORAGE, a storage slot: Core sends no landing
 	// here, and the delivered binds nothing.
 	eng.Events.Emit(Event{Type: EventOrderDelivered, Payload: OrderDeliveredEvent{
-		OrderID: orderID2, OrderType: orders.TypeComplex, ProcessNodeID: &nodeID, BinID: &bid2, LandingSent: true,
+		OrderID: orderID2, OrderType: orders.TypeComplex, ProcessNodeID: &nodeID, BinID: &bid2, FromNotice: true,
 	}})
 
 	rt2, err := db.GetProcessNodeRuntime(nodeID)

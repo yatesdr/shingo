@@ -237,11 +237,12 @@ func MigrationVersions(file string, src []byte) ([]int, error) {
 	if len(dups) > 0 {
 		return nil, fmt.Errorf("%s declares %s more than once", file, FormatVersions(dups))
 	}
-	// Core's retired chain: the squash at v184 replaced migrations 1..N with a
-	// generated baseline that records them, and migrations.go declares N as
-	// RetiredChain. Those versions are declared still (a database born on the
-	// baseline records them), so a release that adds none since a tag that
-	// carried them as entries has added none.
+	// A retired chain (Core's at v184, the Edge's at v59): the squash replaced
+	// migrations 1..N with a generated baseline that records them, and
+	// migrations.go declares N as RetiredChain. Those versions are declared
+	// still (a database born on the baseline records them), so a release that
+	// adds none since a tag that carried them as entries has added none
+	// (AddedMigrations covers the ones the tag's entries did not spell).
 	for v, n := 1, retiredChain(f); v <= n; v++ {
 		if !seen[v] {
 			seen[v] = true
@@ -369,21 +370,29 @@ func readAt(root, rev string, paths []string) (map[string][]byte, error) {
 
 // tipMigrations reads reg's versions in the working tree, where the registry
 // must exist and declare one, or the reader is stale.
-func tipMigrations(root string, reg Registry) ([]int, error) {
+func tipMigrations(root string, reg Registry) (versions []int, retired int, err error) {
 	src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(reg.File)))
 	if err != nil {
-		return nil, fmt.Errorf("%s migrations: %w (the registry moved: update Registries in shared/scripts/release)", reg.Binary, err)
+		return nil, 0, fmt.Errorf("%s migrations: %w (the registry moved: update Registries in shared/scripts/release)", reg.Binary, err)
 	}
-	vs, err := MigrationVersions(reg.File, src)
-	if err == nil && len(vs) == 0 {
-		err = fmt.Errorf("%s declares no migration (the registry moved: update Registries in shared/scripts/release)", reg.File)
+	if versions, err = MigrationVersions(reg.File, src); err != nil {
+		return nil, 0, err
 	}
-	return vs, err
+	if len(versions) == 0 {
+		return nil, 0, fmt.Errorf("%s declares no migration (the registry moved: update Registries in shared/scripts/release)", reg.File)
+	}
+	f, err := parser.ParseFile(token.NewFileSet(), reg.File, src, parser.SkipObjectResolution)
+	if err != nil {
+		return nil, 0, err
+	}
+	return versions, retiredChain(f), nil
 }
 
 // AddedMigrations is, per binary, the versions the working tree declares and
 // tag does not. At the tag a registry may not exist yet (the Edge had no
-// versioned migrations at v0.0.14): that is no migration.
+// versioned migrations at v0.0.14): that is no migration. Nor is a version the
+// tip's chain retires at or below the tag's head: the Edge's v1 was an adopted
+// baseline no entry declared, and a chain retired at v59 declares it.
 func AddedMigrations(root, tag string) (map[string][]int, error) {
 	var files []string
 	for _, reg := range Registries {
@@ -395,7 +404,7 @@ func AddedMigrations(root, tag string) (map[string][]int, error) {
 	}
 	added := map[string][]int{}
 	for _, reg := range Registries {
-		tip, err := tipMigrations(root, reg)
+		tip, retired, err := tipMigrations(root, reg)
 		if err != nil {
 			return nil, err
 		}
@@ -405,10 +414,15 @@ func AddedMigrations(root, tag string) (map[string][]int, error) {
 				return nil, err
 			}
 		}
+		head := 0
+		if len(old) > 0 {
+			head = slices.Max(old)
+		}
 		for _, v := range tip {
-			if !slices.Contains(old, v) {
-				added[reg.Binary] = append(added[reg.Binary], v)
+			if slices.Contains(old, v) || (v <= retired && v <= head) {
+				continue
 			}
+			added[reg.Binary] = append(added[reg.Binary], v)
 		}
 	}
 	return added, nil

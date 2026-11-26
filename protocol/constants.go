@@ -75,11 +75,14 @@ const AuditActorUI = "ui"
 
 // ActorCoreLifecycle is the actor on a UOPAdjustment that Core generated
 // itself, from a carrier's lifecycle, rather than from a person declaring a
-// number. One producer writes it: the generation announcement in
+// number. Its producers: the generation announcement in
 // BinManifestService.bumpEpoch, on the resets nobody is standing at — a press
-// finishing a carrier, a release, a dispatch claim. bumpEpoch also announces
-// the two an operator performs at the bin detail modal, and those carry
-// AuditActorUI instead; which it sends is the Declarer its caller passed.
+// finishing a carrier, a release, a dispatch claim; a late draw's count
+// (BinManifestService.AnnounceLateDrawTx); and every copy of a correction at a
+// seat several stations claim, a person's included, so that it binds nobody
+// (service announceLifecycle). bumpEpoch also announces the two an operator
+// performs at the bin detail modal, and those carry AuditActorUI instead at
+// any other seat; which it sends is the Declarer its caller passed.
 //
 // It is a wire value on an existing field — nothing new travels because of it.
 // It exists so the Edge can tell the two apart, which it could not before.

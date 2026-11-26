@@ -4,12 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
 
 	"shingo/protocol"
 	"shingocore/dispatch/plan"
+	"shingocore/domain"
 	"shingocore/store/bins"
 	"shingocore/store/loaders"
 	"shingocore/store/nodes"
@@ -321,13 +323,19 @@ func (r *windowReads) allowedAt(d *Dispatcher, windowID int64) ([]*bins.BinType,
 
 // windowStation is the Edge station a pull's move belongs to, so the delivered
 // notice reaches the board holding the window: the window's one effective
-// station, else the plant's one Edge, else none (the move still runs; the Edge
-// learns of the cart from the bin on the window).
+// station while the registry holds it, else the plant's one Edge, else none
+// (the move still runs; the Edge learns of the cart from the bin on the
+// window). A station Remove station took off is no addressee, though a node
+// assignment may still name it (closing ruling 2026-11-22;
+// TestWindowStation_NeverARemovedStation); a registry that cannot be read
+// keeps the assignment's station, as before. Two statements.
 func (d *Dispatcher) windowStation(w *nodes.Node) string {
-	if sts, err := d.db.GetEffectiveStations(w.ID); err == nil && len(sts) == 1 {
+	edges, eerr := d.db.ListEdges()
+	if sts, err := d.db.GetEffectiveStations(w.ID); err == nil && len(sts) == 1 &&
+		(eerr != nil || slices.ContainsFunc(edges, func(e domain.RegistryEdge) bool { return e.StationUID == sts[0] })) {
 		return sts[0]
 	}
-	if edges, err := d.db.ListEdges(); err == nil && len(edges) == 1 {
+	if eerr == nil && len(edges) == 1 {
 		return edges[0].StationUID
 	}
 	return ""

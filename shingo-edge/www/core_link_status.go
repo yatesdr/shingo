@@ -34,7 +34,8 @@ type coreLinkStatus struct {
 	// FeedConfirmedAgeSeconds is, per Core feed, seconds since Core last
 	// confirmed this Edge's copy; null where it never has.
 	FeedConfirmedAgeSeconds map[string]*int64 `json:"feed_confirmed_age_seconds"`
-	// FeedFlags are the keys flagged as not converging. Never null.
+	// FeedFlags is the Edge's flag list (engine.FeedFlags): the keys flagged
+	// as not converging, and the start's schema drift. Never null.
 	FeedFlags []string `json:"feed_flags"`
 }
 

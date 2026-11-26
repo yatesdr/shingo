@@ -4,6 +4,7 @@ package messaging
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"log"
 	"reflect"
@@ -67,7 +68,7 @@ func TestHandleEdgeRegisterPin_DerivesRegistry(t *testing.T) {
 	id, _ := seedRegisterLoader(t, db, "REG-PIN-SLOT", "P-REG", 12)
 
 	svc := NewCoreDataService(db, &captureResponder{}, service.EpochAnnounce{})
-	svc.HandleEdgeRegister(registerEnv(st), &protocol.EdgeRegister{StationID: st, Hostname: "h", Version: "v"})
+	svc.HandleEdgeRegister(registerEnv(st), &protocol.EdgeRegister{Hostname: "h", Version: "v"})
 
 	got := stationThresholds(t, db, st)
 	if len(got) != 1 || got["REG-PIN-SLOT/P-REG"] != 12 {
@@ -75,7 +76,7 @@ func TestHandleEdgeRegisterPin_DerivesRegistry(t *testing.T) {
 	}
 
 	testutil.MustNoErr(t, db.DeleteLoader(id), "archive loader")
-	svc.HandleEdgeRegister(registerEnv(st), &protocol.EdgeRegister{StationID: st, Hostname: "h", Version: "v"})
+	svc.HandleEdgeRegister(registerEnv(st), &protocol.EdgeRegister{Hostname: "h", Version: "v"})
 	if got := stationThresholds(t, db, st); len(got) != 0 {
 		t.Fatalf("registry after archive + register = %v, want empty — every loader archived is config with no demand", got)
 	}
@@ -94,7 +95,7 @@ func TestHandleEdgeRegister_UnresolvableNodeKeepsRows(t *testing.T) {
 	_, nodeID := seedRegisterLoader(t, db, "REG-RED-SLOT", "P-RED", 7)
 
 	svc := NewCoreDataService(db, &captureResponder{}, service.EpochAnnounce{})
-	svc.HandleEdgeRegister(registerEnv(st), &protocol.EdgeRegister{StationID: st, Hostname: "h", Version: "v"})
+	svc.HandleEdgeRegister(registerEnv(st), &protocol.EdgeRegister{Hostname: "h", Version: "v"})
 	if got := stationThresholds(t, db, st); got["REG-RED-SLOT/P-RED"] != 7 {
 		t.Fatalf("seeded registry = %v, want REG-RED-SLOT/P-RED=7", got)
 	}
@@ -107,7 +108,7 @@ func TestHandleEdgeRegister_UnresolvableNodeKeepsRows(t *testing.T) {
 	var buf bytes.Buffer
 	prev := log.Writer()
 	log.SetOutput(io.MultiWriter(prev, &buf))
-	svc.HandleEdgeRegister(registerEnv(st), &protocol.EdgeRegister{StationID: st, Hostname: "h", Version: "v"})
+	svc.HandleEdgeRegister(registerEnv(st), &protocol.EdgeRegister{Hostname: "h", Version: "v"})
 	log.SetOutput(prev)
 
 	if got := stationThresholds(t, db, st); got["REG-RED-SLOT/P-RED"] != 7 {
@@ -141,7 +142,7 @@ func TestHandleEdgeRegister_ANewEdgeIsIntroducedAndThenKnown(t *testing.T) {
 	}
 	ack := "reply " + protocol.SubjectEdgeHeartbeatAck
 
-	svc.HandleEdgeHeartbeat(feedsPinEnv(uid), &protocol.EdgeHeartbeat{StationID: uid, Feeds: map[string]string{}})
+	svc.HandleEdgeHeartbeat(feedsPinEnv(uid), &protocol.EdgeHeartbeat{Feeds: map[string]string{}})
 	if got, want := resp.trace(), []string{ack, "send " + protocol.SubjectEdgeRegisterRequest + " -> " + uid}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("first heartbeat: trace = %v, want %v", got, want)
 	}
@@ -150,7 +151,7 @@ func TestHandleEdgeRegister_ANewEdgeIsIntroducedAndThenKnown(t *testing.T) {
 	}
 
 	resp.events = nil
-	svc.HandleEdgeRegister(registerEnv(uid), &protocol.EdgeRegister{StationID: uid, Hostname: "pin-host",
+	svc.HandleEdgeRegister(registerEnv(uid), &protocol.EdgeRegister{Hostname: "pin-host",
 		Instance: "pin-run-1", Version: "v-pin", SchemaVersion: 3})
 	if got, want := resp.trace(), []string{"reply " + protocol.SubjectEdgeRegistered}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("register: trace = %v, want %v", got, want)
@@ -171,7 +172,7 @@ func TestHandleEdgeRegister_ANewEdgeIsIntroducedAndThenKnown(t *testing.T) {
 	}
 
 	resp.events = nil
-	svc.HandleEdgeHeartbeat(feedsPinEnv(uid), &protocol.EdgeHeartbeat{StationID: uid, Feeds: map[string]string{}})
+	svc.HandleEdgeHeartbeat(feedsPinEnv(uid), &protocol.EdgeHeartbeat{Feeds: map[string]string{}})
 	if got, want := resp.trace(), []string{ack}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("heartbeat after the register: trace = %v, want %v (no second register request)", got, want)
 	}
@@ -184,10 +185,9 @@ func TestHandleEdgeRegister_ANewEdgeIsIntroducedAndThenKnown(t *testing.T) {
 
 // TestHandlers_TheStationIsTheEnvelopes pins B0 for the register and the
 // heartbeat: Core takes the station from the envelope's source and never from
-// the body's station_id, which an Edge still sends for an older Core. Each
-// body here names a station that does not exist; were it read, the register
-// would introduce that one and the heartbeat would draw a register request
-// to it.
+// a station_id in the body, which a v0.19.0 Edge sends. Each body here is that
+// JSON naming a station that does not exist; were it read, the register would
+// introduce that one and the heartbeat would draw a register request to it.
 func TestHandlers_TheStationIsTheEnvelopes(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -201,7 +201,9 @@ func TestHandlers_TheStationIsTheEnvelopes(t *testing.T) {
 		return n
 	}
 
-	svc.HandleEdgeRegister(registerEnv(sender), &protocol.EdgeRegister{StationID: body, Hostname: "h", Version: "v"})
+	var reg protocol.EdgeRegister
+	testutil.MustNoErr(t, json.Unmarshal([]byte(`{"station_id":"`+body+`","hostname":"h","version":"v"}`), &reg), "decode the register")
+	svc.HandleEdgeRegister(registerEnv(sender), &reg)
 	if rows(sender) != 1 || rows(body) != 0 {
 		t.Fatalf("register from %s naming %s: rows %d for the sender, %d for the body's; want 1 and 0",
 			sender, body, rows(sender), rows(body))
@@ -211,7 +213,9 @@ func TestHandlers_TheStationIsTheEnvelopes(t *testing.T) {
 	}
 
 	resp.events = nil
-	svc.HandleEdgeHeartbeat(feedsPinEnv(sender), &protocol.EdgeHeartbeat{StationID: body, Feeds: map[string]string{}})
+	var beatBody protocol.EdgeHeartbeat
+	testutil.MustNoErr(t, json.Unmarshal([]byte(`{"station_id":"`+body+`","feeds":{}}`), &beatBody), "decode the heartbeat")
+	svc.HandleEdgeHeartbeat(feedsPinEnv(sender), &beatBody)
 	if got, want := resp.trace(), []string{"reply " + protocol.SubjectEdgeHeartbeatAck}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("heartbeat from %s naming %s: trace = %v, want %v (the sender is known)", sender, body, got, want)
 	}

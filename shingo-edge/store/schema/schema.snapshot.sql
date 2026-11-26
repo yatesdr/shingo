@@ -129,7 +129,6 @@ CREATE TABLE changeover_station_tasks (
 CREATE TABLE core_loader_payloads (
     loader_key     TEXT    NOT NULL,   -- the owning loader's identity token
     payload_code   TEXT    NOT NULL,
-    min_stock      INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (loader_key, payload_code)
 );
 
@@ -138,7 +137,6 @@ CREATE TABLE core_loader_positions (
     position_node  TEXT    NOT NULL,   -- the position node NAME (a real node)
     payload_code   TEXT    NOT NULL,
     home_kind      TEXT    NOT NULL DEFAULT '',  -- 'home' | 'buffer' (synced from Core); '' = pre-field Core, fall back to classifying by empty payload
-    min_stock      INTEGER NOT NULL DEFAULT 0,
     ordinal        INTEGER NOT NULL DEFAULT 0,   -- where the operator dragged this window; 0 everywhere = nothing arranged, fall back to a number-aware name sort
     PRIMARY KEY (loader_key, position_node)
 );
@@ -151,7 +149,6 @@ CREATE TABLE core_loaders (
     replenishment  TEXT    NOT NULL DEFAULT '',
     outbound_dest  TEXT    NOT NULL DEFAULT '',
     inbound_source TEXT    NOT NULL DEFAULT '',
-    config_gen     INTEGER NOT NULL DEFAULT 0,  -- unread, left at 0: a rolled-back build's loader statements name it (Edge v27)
     funnel_windows INTEGER NOT NULL DEFAULT 0,  -- 1 = one window at a time; 0 = spread across windows (the default everywhere)
     -- 1 = the stage-1 half of a two-stage unloader: its CLEAR leaves the cart
     -- bare and Core stamps the cart's own marker. Core owns it.
@@ -381,9 +378,6 @@ CREATE TABLE orders (
     delivery_node   TEXT NOT NULL DEFAULT '',
     staging_node    TEXT NOT NULL DEFAULT '',
     source_node     TEXT NOT NULL DEFAULT '',
-    -- load_type: dormant. Nothing on either module read it, and its writers went
-    -- (2026-10-25); kept at its default so a rolled-back Edge's INSERT runs.
-    load_type       TEXT NOT NULL DEFAULT '',
     waybill_id      TEXT,
     -- robot_id (Edge v50): the robot Core assigned, written by a waybill or an
     -- order.update that names one. An empty robot on the wire is absent, not a
@@ -467,10 +461,6 @@ CREATE TABLE orders (
     -- hold or rejection sentence the board's chip shows.
     release_intent  TEXT NOT NULL DEFAULT '',
     release_held    TEXT NOT NULL DEFAULT '',
-    -- cancel_intent (Edge v60): the cancel this station asked Core for and
-    -- Core has not ended (domain.CancelIntent, JSON; '' = none). The row keeps
-    -- Core's status until Core's word ends it, which clears this.
-    cancel_intent   TEXT NOT NULL DEFAULT '',
     -- staged_at (Edge v54): the engine's clock when this Edge last mirrored the
     -- order to staged (a robot parked). NULL until then. The idle rule's hour
     -- does not start before it (engine/idle_cancel.go).
@@ -484,7 +474,7 @@ CREATE TABLE orders (
     want            TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
-, payload_desc TEXT NOT NULL DEFAULT '', origin_id TEXT NOT NULL DEFAULT '', origin_class TEXT NOT NULL DEFAULT '');
+, payload_desc TEXT NOT NULL DEFAULT '', origin_id TEXT NOT NULL DEFAULT '', origin_class TEXT NOT NULL DEFAULT '', cancel_intent TEXT NOT NULL DEFAULT '');
 
 CREATE TABLE outbox (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -888,14 +878,6 @@ CREATE TABLE style_node_claims (
     role                    TEXT NOT NULL DEFAULT 'consume',
     swap_mode               TEXT NOT NULL,
     payload_code            TEXT NOT NULL DEFAULT '',
-    -- DEAD. Capacity is Core's fact, resolved from payload_catalog on every
-    -- claim read (capacity.SQL) and keyed on payload_code above.
-    -- Nothing reads or writes this column; it holds whatever it held when the
-    -- copies stopped, and it goes on the next rebuildStyleNodeClaims(). It is
-    -- not dropped here because a column rebuild is its own change with its own
-    -- risk, and because the old numbers are the only record of how far the
-    -- copies had drifted.
-    uop_capacity            INTEGER NOT NULL DEFAULT 0,
     reorder_point           INTEGER NOT NULL DEFAULT 0,
     -- Cell auto-reorder is opt-IN: a claim must not arm itself. Was DEFAULT 1,
     -- which made "new claim" mean "count-driven order creation is live" before
@@ -903,10 +885,7 @@ CREATE TABLE style_node_claims (
     -- explicitly (processes/claims.go UpsertClaim, processes/styles.go
     -- cloneClaimColumns, seeddev/seed_edge.go), so the default is reachable
     -- only by a future hand-written INSERT that omits it — which is exactly
-    -- the case that should land off. Fresh databases only: this is
-    -- CREATE TABLE IF NOT EXISTS and there is no ALTER for this column, so an
-    -- existing plant DB keeps its current table definition and its current
-    -- per-claim values either way.
+    -- the case that should land off.
     auto_reorder            INTEGER NOT NULL DEFAULT 0,
     inbound_staging         TEXT NOT NULL DEFAULT '',
     outbound_staging        TEXT NOT NULL DEFAULT '',
@@ -1041,7 +1020,7 @@ CREATE TABLE style_node_claims (
     -- oracle — drift is computed from the rows themselves.
     source_preset_id        INTEGER,
     source_preset_version   INTEGER,
-    created_at              TEXT NOT NULL DEFAULT (datetime('now')), staging_node TEXT NOT NULL DEFAULT '', release_node TEXT NOT NULL DEFAULT '', inbound_source_node TEXT NOT NULL DEFAULT '', inbound_source_node_group TEXT NOT NULL DEFAULT '', outbound_source_node TEXT NOT NULL DEFAULT '', outbound_source_node_group TEXT NOT NULL DEFAULT '', outbound_source TEXT NOT NULL DEFAULT '', mode TEXT NOT NULL DEFAULT 'loader', second_paired_core_node TEXT NOT NULL DEFAULT '',
+    created_at              TEXT NOT NULL DEFAULT (datetime('now')), second_paired_core_node TEXT NOT NULL DEFAULT '',
     UNIQUE(style_id, core_node_name)
 );
 

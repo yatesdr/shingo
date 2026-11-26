@@ -152,7 +152,6 @@ func (m *Mutator) BindActiveBin(nodeID, binID int64, deltaEpoch int64) error {
 // them: Core's word on which carrier is at the slot, its count and its
 // generation. Callers:
 //
-//   - handler_uop_adjustment.go Bound arm (admin Move put this carrier here);
 //   - handler_uop_adjustment.go count arm (a count for the carrier already
 //     bound here — binID is the bound one, the count and stamp are Core's;
 //     the stamp only moves forward, see the store's epochAssignOnBind).
@@ -259,8 +258,7 @@ func (m *Mutator) SetClaimCountAndEpoch(nodeID int64, activeClaimID *int64, uop 
 
 // Land binds the carrier Core placed at the slot: THE landing verb (Lane H,
 // H.4). Its one caller is Engine.landCarrier (engine/handler_bin_landed.go),
-// for the landing itself and, for one release, for an older Core's Bound and
-// delivered routed through it (H.7). Its refusals are the statement's WHERE
+// for the landing. Its refusals are the statement's WHERE
 // (processes.BindLanding); it reports whether it landed, and the seat's
 // active_pull as the bind left it.
 //

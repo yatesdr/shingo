@@ -184,8 +184,8 @@ func TestBinMove_ProjectionDecidesWhoHearsTheDelivery(t *testing.T) {
 
 		o := moveThroughDelivery(t, eng, db, storageNode, lineNode, "b2-window", "b2-window")
 		got := messagesAbout(t, db, o)
-		want := []string{"b2-window " + pickedUp, "b2-window " + protocol.TypeOrderDelivered}
-		if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		want := []string{"b2-window " + pickedUp, "b2-window data." + protocol.SubjectBinLanded, "b2-window " + protocol.TypeOrderDelivered}
+		if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
 			t.Errorf("messages about the move %v, want exactly %v: no ack, no waybill, no status", got, want)
 		}
 	})

@@ -50,20 +50,6 @@ const ClaimQuarantineTable = "style_node_claims_quarantine"
 // line. One predicate, one reason: there is no per-row judgement to record.
 const ClaimQuarantineReason = "Core owns loader configuration; a stored manual_swap claim is a second authority"
 
-// quarantineMeta are the four columns the archive adds to its mirror of
-// style_node_claims: when the row moved, why, and enough of the sync that
-// displaced it to judge the move afterwards. The loader KEYS rather than a count
-// alone, because "which sync" is answered by what the sync carried.
-//
-// Every name is prefixed so it can never collide with a column style_node_claims
-// grows later — the mirror below copies by name.
-var quarantineMeta = []schema.Column{
-	{Name: "quarantined_at", Type: "TEXT NOT NULL DEFAULT ''"},
-	{Name: "quarantined_reason", Type: "TEXT NOT NULL DEFAULT ''"},
-	{Name: "quarantined_sync_loader_count", Type: "INTEGER NOT NULL DEFAULT 0"},
-	{Name: "quarantined_sync_loader_keys", Type: "TEXT NOT NULL DEFAULT ''"},
-}
-
 // QuarantinedClaim identifies one moved row: enough to name it in a log line a
 // person reads on the floor, and enough to find it again in the archive.
 type QuarantinedClaim struct {
@@ -71,84 +57,6 @@ type QuarantinedClaim struct {
 	StyleID      int64
 	CoreNodeName string
 	PayloadCode  string
-}
-
-// EnsureClaimQuarantine creates the archive and keeps its shape a mirror of
-// style_node_claims. Idempotent, and safe on a database of any age.
-//
-// THE SHAPE IS DERIVED, NOT WRITTEN DOWN, and that is deliberate.
-// style_node_claims reaches its current shape by two routes — the baseline
-// CREATE in sqlite_ddl.go and nine ALTER ADD COLUMNs in migrate() — so a
-// hand-copied column list in the DDL would be wrong on the day it was written
-// and wrong again after the next ALTER. A mirror that copies the live column
-// list by name cannot drift, and a row that lands here is therefore the row in
-// full whatever vintage the database is.
-//
-// Must run AFTER every style_node_claims migration, which is why migrate() calls
-// it last: the mirror can only copy the columns that exist when it looks. A
-// column that arrives later is added on the next startup by the same pass.
-func (db *DB) EnsureClaimQuarantine() error {
-	live, err := schema.Columns(db.DB, "style_node_claims")
-	if err != nil {
-		return fmt.Errorf("quarantine mirror: read style_node_claims columns: %w", err)
-	}
-	if len(live) == 0 {
-		// No claims table means a database schema.Apply has not touched. Nothing
-		// to mirror and nothing to quarantine; verifySchema reports the real
-		// problem.
-		return nil
-	}
-
-	exists, err := schema.TableExists(db.DB, ClaimQuarantineTable)
-	if err != nil {
-		return fmt.Errorf("quarantine mirror: %w", err)
-	}
-	if !exists {
-		// CREATE TABLE AS SELECT copies the column names and their affinities and
-		// drops the constraints, which is exactly what an archive wants: no
-		// AUTOINCREMENT (the id is the ORIGINAL row's, carried so a restore puts
-		// it back where the runtime pointers expect it), no UNIQUE (the same
-		// (style, node) pair may be quarantined, restored, and quarantined again),
-		// and no foreign key into styles (a style deleted afterwards must not
-		// cascade the archive away).
-		if _, err := db.Exec(`CREATE TABLE ` + ClaimQuarantineTable + ` AS SELECT * FROM style_node_claims WHERE 0`); err != nil {
-			return fmt.Errorf("quarantine mirror: create %s: %w", ClaimQuarantineTable, err)
-		}
-	}
-
-	have, err := schema.Columns(db.DB, ClaimQuarantineTable)
-	if err != nil {
-		return fmt.Errorf("quarantine mirror: read %s columns: %w", ClaimQuarantineTable, err)
-	}
-	present := make(map[string]bool, len(have))
-	for _, c := range have {
-		present[c.Name] = true
-	}
-
-	for _, c := range live {
-		if present[c.Name] {
-			continue
-		}
-		decl := c.Type
-		if decl == "" {
-			decl = "TEXT" // an untyped column; BLOB affinity either way
-		}
-		// No NOT NULL and no default: a column added after rows are already in the
-		// archive leaves NULL on those rows, which is the honest value for "this
-		// claim predates that column".
-		if _, err := db.Exec(`ALTER TABLE ` + ClaimQuarantineTable + ` ADD COLUMN ` + c.Name + ` ` + decl); err != nil {
-			return fmt.Errorf("quarantine mirror: add %s.%s: %w", ClaimQuarantineTable, c.Name, err)
-		}
-	}
-	for _, m := range quarantineMeta {
-		if present[m.Name] {
-			continue
-		}
-		if _, err := db.Exec(`ALTER TABLE ` + ClaimQuarantineTable + ` ADD COLUMN ` + m.Name + ` ` + m.Type); err != nil {
-			return fmt.Errorf("quarantine mirror: add %s.%s: %w", ClaimQuarantineTable, m.Name, err)
-		}
-	}
-	return nil
 }
 
 // CountLoaderClaims reports how many stored manual_swap claims exist. It is the

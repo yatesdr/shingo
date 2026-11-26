@@ -40,10 +40,11 @@ import (
 // changed nothing on gets nothing back.
 //
 // One transaction (the runner's): the lock on every table it touches that is
-// there, then the steps in order. Idempotent: a step whose leftover is gone
-// does nothing and records nothing. Nothing CASCADEs: an object outside these
-// (a view on a dropped table, say) makes up fail and name it, rather than go
-// unrecorded.
+// there, then the steps in order, the tables dropped first. Idempotent: a step
+// whose leftover is gone does nothing and records nothing. Nothing CASCADEs: a
+// drop first reads what depends on it and fails naming what it would not
+// record (v190NoDependents), and a rename whose target is held fails naming
+// the holder (v190NameFree).
 
 const (
 	v190Entity = "schema"
@@ -64,10 +65,13 @@ type v190Named struct {
 	Def  string `json:"def"`
 }
 
-// v190Sequence is a sequence a dropped table owned, and the owning column.
+// v190Sequence is a sequence a dropped table owned, its type and the owning
+// column. A record written before the type was kept has none: down then makes
+// Postgres's default, a bigint sequence.
 type v190Sequence struct {
 	Name   string `json:"name"`
 	Column string `json:"column"`
+	Type   string `json:"type,omitempty"`
 }
 
 // v190Record is what up read before one change: the audit row's old_value.
@@ -84,9 +88,10 @@ type v190Record struct {
 }
 
 // v190Step is one leftover. gone is a catalog query, on args, answering true
-// when the leftover is not there (or is there in a shape up leaves alone);
-// read, run only when it is there, returns the record of what up will change;
-// up is the change and down its inverse, both from the record.
+// when the leftover is not there (for a rename: the from name is absent,
+// whoever holds the other); read, run only when it is there, returns the
+// record of what up will change, or the reason up must not change it; up is
+// the change and down its inverse, both from the record.
 type v190Step struct {
 	action string
 	gone   string
@@ -118,7 +123,12 @@ func (s v190Step) find(tx *sql.Tx) (*v190Record, error) {
 	return s.read(tx)
 }
 
+// The tables go first: at one plant payload_instances was the old payloads
+// table, and it held the names the renames below give back to payloads.
 var v190Steps = []v190Step{
+	v190DropTable("db_test"),
+	v190DropTable("payload_instances"),
+	v190DropTable("lane_access"),
 	v190SetDefault("demand_registry", "payload_code", "''::text"),
 	v190DropConstraint("payloads", "payloads_bin_id_fkey1"),
 	v190DropColumn("payloads", "bin_id"),
@@ -130,9 +140,6 @@ var v190Steps = []v190Step{
 	v190DropConstraint("nodes", "nodes_node_type_id_fkey"),
 	v190Retype("nodes", "node_type_id", "bigint"),
 	v190Retype("nodes", "parent_id", "bigint"),
-	v190DropTable("db_test"),
-	v190DropTable("payload_instances"),
-	v190DropTable("lane_access"),
 }
 
 // v190Tables are the tables the steps touch, locked first where there.
@@ -156,7 +163,7 @@ func v190Up(tx *sql.Tx) error {
 	for _, s := range v190Steps {
 		r, err := s.find(tx)
 		if err != nil {
-			return fmt.Errorf("v190 %s: read the catalog: %w", s.action, err)
+			return fmt.Errorf("v190 %s: %w", s.action, err)
 		}
 		if r == nil {
 			continue
@@ -286,6 +293,132 @@ const (
 		WHERE n.nspname = 'public' AND c.relkind = 'S' AND c.relname = `
 )
 
+// Who holds a name a rename wants. v190RelationHolderSQL ($1 the name): every
+// table, index, sequence and view of schema public shares it, so the holder
+// may be any of them; it is named with the table it belongs to.
+// v190ConstraintHolderSQL ($1 the table, $2 from, $3 to): a constraint shares
+// its table's constraint names and, where an index backs it, the index's
+// name, a relation's.
+const (
+	v190RelationHolderSQL = `SELECT pg_describe_object('pg_class'::regclass, c.oid, 0) || COALESCE(
+		 (SELECT ' of table ' || h.relname FROM pg_index x JOIN pg_class h ON h.oid = x.indrelid WHERE x.indexrelid = c.oid),
+		 (SELECT ' owned by table ' || h.relname FROM pg_depend d JOIN pg_class h ON h.oid = d.refobjid
+		   WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND c.relkind = 'S'
+		     AND d.refclassid = 'pg_class'::regclass AND d.deptype IN ('a', 'i') LIMIT 1), '')
+		  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		 WHERE n.nspname = 'public' AND c.relname = $1`
+	v190ConstraintHolderSQL = `SELECT pg_describe_object('pg_constraint'::regclass, k.oid, 0)
+		  FROM pg_constraint k JOIN pg_class t ON t.oid = k.conrelid
+		  JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+		 WHERE t.relname = $1 AND k.conname = $3
+		UNION ALL
+		SELECT pg_describe_object('pg_class'::regclass, c.oid, 0) || COALESCE(
+		 (SELECT ' of table ' || h.relname FROM pg_index x JOIN pg_class h ON h.oid = x.indrelid WHERE x.indexrelid = c.oid), '')
+		  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		 WHERE n.nspname = 'public' AND c.relname = $3
+		   AND EXISTS (SELECT 1 FROM pg_constraint k JOIN pg_class t ON t.oid = k.conrelid
+		                WHERE t.relname = $1 AND t.relnamespace = n.oid AND k.conname = $2 AND k.conindid <> 0)`
+)
+
+// v190NameFree refuses a rename of from to a name that is held, by q on args,
+// with a sentence naming each holder.
+func v190NameFree(tx *sql.Tx, from, to, q string, args ...any) error {
+	held, err := v190Lines(tx, q, args...)
+	if err != nil {
+		return err
+	}
+	if len(held) > 0 {
+		return fmt.Errorf("%s cannot take the name %s: %s holds it; rename or drop that, then start Core again (nothing was changed)",
+			from, to, strings.Join(held, " and "))
+	}
+	return nil
+}
+
+// v190Lines runs a one-column catalog query.
+func v190Lines(tx *sql.Tx, q string, args ...any) ([]string, error) {
+	rows, err := tx.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// What a drop takes. Each v190Going* is the objects a drop takes that v190
+// records or Postgres owns: a table ($1) with its row type, constraints,
+// indexes, defaults and owned sequences; a column ($1, $2) with the
+// constraints and indexes over it and its default; a constraint ($1, $2) with
+// its index. v190DependentsSQL is whatever else hangs on one of them: it
+// would make the drop fail (a view, another table's key or default) or go
+// with it unrecorded, so that down could not put it back (a trigger, a
+// policy, an index whose predicate reads the column). Internal dependencies
+// are Postgres's own, except an identity column's sequence.
+const (
+	v190TableRef = `t AS (SELECT c.oid, c.reltype FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		 WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND c.relname = $1)`
+	v190GoingTable = `WITH ` + v190TableRef + `, going (classid, objid, objsubid) AS (
+		SELECT 'pg_class'::regclass::oid, t.oid, 0 FROM t
+		UNION ALL SELECT 'pg_type'::regclass::oid, t.reltype, 0 FROM t
+		UNION ALL SELECT 'pg_type'::regclass::oid, y.typarray, 0 FROM t JOIN pg_type y ON y.oid = t.reltype
+		UNION ALL SELECT 'pg_constraint'::regclass::oid, k.oid, 0 FROM t JOIN pg_constraint k ON k.conrelid = t.oid
+		 WHERE k.contype IN ('p', 'u', 'c', 'f', 'x', 'n')
+		UNION ALL SELECT 'pg_class'::regclass::oid, x.indexrelid, 0 FROM t JOIN pg_index x ON x.indrelid = t.oid
+		UNION ALL SELECT 'pg_attrdef'::regclass::oid, a.oid, 0 FROM t JOIN pg_attrdef a ON a.adrelid = t.oid
+		UNION ALL SELECT 'pg_class'::regclass::oid, s.oid, 0 FROM t
+		  JOIN pg_depend o ON o.refobjid = t.oid AND o.refclassid = 'pg_class'::regclass
+		   AND o.classid = 'pg_class'::regclass AND o.deptype = 'a'
+		  JOIN pg_class s ON s.oid = o.objid AND s.relkind = 'S')`
+	v190GoingColumn = `WITH ` + v190TableRef + `, col AS (SELECT t.oid, a.attnum FROM t
+		  JOIN pg_attribute a ON a.attrelid = t.oid AND a.attname = $2 AND NOT a.attisdropped),
+		going (classid, objid, objsubid) AS (
+		SELECT 'pg_class'::regclass::oid, col.oid, col.attnum::integer FROM col
+		UNION ALL SELECT 'pg_constraint'::regclass::oid, k.oid, 0 FROM col JOIN pg_constraint k ON k.conrelid = col.oid
+		 WHERE k.contype IN ('p', 'u', 'c', 'f', 'x', 'n') AND col.attnum = ANY (k.conkey)
+		UNION ALL SELECT 'pg_class'::regclass::oid, x.indexrelid, 0 FROM col JOIN pg_index x ON x.indrelid = col.oid
+		 WHERE col.attnum = ANY (x.indkey)
+		UNION ALL SELECT 'pg_attrdef'::regclass::oid, a.oid, 0 FROM col
+		  JOIN pg_attrdef a ON a.adrelid = col.oid AND a.adnum = col.attnum)`
+	v190GoingConstraint = `WITH ` + v190TableRef + `, k AS (SELECT c.oid, c.conindid FROM t
+		  JOIN pg_constraint c ON c.conrelid = t.oid AND c.conname = $2),
+		going (classid, objid, objsubid) AS (
+		SELECT 'pg_constraint'::regclass::oid, k.oid, 0 FROM k
+		UNION ALL SELECT 'pg_class'::regclass::oid, k.conindid, 0 FROM k WHERE k.conindid <> 0 AND EXISTS (
+		 SELECT 1 FROM pg_depend o WHERE o.classid = 'pg_class'::regclass AND o.objid = k.conindid
+		    AND o.refclassid = 'pg_constraint'::regclass AND o.refobjid = k.oid AND o.deptype = 'i'))`
+	v190DependentsSQL = `
+		SELECT DISTINCT pg_describe_object(d.classid, d.objid, d.objsubid)
+		  FROM pg_depend d
+		  JOIN going g ON g.classid = d.refclassid AND g.objid = d.refobjid
+		   AND (g.objsubid = 0 OR g.objsubid = d.refobjsubid)
+		 WHERE (d.deptype IN ('n', 'a') OR (d.deptype = 'i' AND d.classid = 'pg_class'::regclass
+		        AND EXISTS (SELECT 1 FROM pg_class s WHERE s.oid = d.objid AND s.relkind = 'S')))
+		   AND NOT EXISTS (SELECT 1 FROM going w WHERE w.classid = d.classid AND w.objid = d.objid
+		        AND (w.objsubid = 0 OR w.objsubid = d.objsubid))
+		 ORDER BY 1`
+)
+
+// v190NoDependents refuses a drop of what with a sentence naming every
+// dependent going does not cover.
+func v190NoDependents(tx *sql.Tx, what, going string, args ...any) error {
+	found, err := v190Lines(tx, going+v190DependentsSQL, args...)
+	if err != nil {
+		return err
+	}
+	if len(found) > 0 {
+		return fmt.Errorf("%s cannot be dropped while these depend on it: %s; drop or move them, then start Core again (nothing was changed)",
+			what, strings.Join(found, "; "))
+	}
+	return nil
+}
+
 // v190ReadColumn is a column of a table in public as the catalog defines it;
 // nil when it is not there.
 func v190ReadColumn(tx *sql.Tx, table, column string) (*v190Column, error) {
@@ -383,6 +516,9 @@ func v190DropConstraint(table, name string) v190Step {
 		gone:   `SELECT NOT EXISTS (` + v190ConstraintSQL + `$2)`,
 		args:   []any{table, name},
 		read: func(tx *sql.Tx) (*v190Record, error) {
+			if err := v190NoDependents(tx, table+"."+name, v190GoingConstraint, table, name); err != nil {
+				return nil, err
+			}
 			return &v190Record{Table: table, Name: name, Def: schema.ConstraintDef(tx, table, name)}, nil
 		},
 		up: func(r *v190Record) []string {
@@ -402,6 +538,9 @@ func v190DropColumn(table, column string) v190Step {
 		read: func(tx *sql.Tx) (*v190Record, error) {
 			c, err := v190ReadColumn(tx, table, column)
 			if err != nil || c == nil {
+				return nil, err
+			}
+			if err := v190NoDependents(tx, table+"."+column, v190GoingColumn, table, column); err != nil {
 				return nil, err
 			}
 			r := &v190Record{Table: table, Column: c}
@@ -432,9 +571,12 @@ func v190DropColumn(table, column string) v190Step {
 func v190RenameConstraint(table, from, to string) v190Step {
 	return v190Step{
 		action: "rename constraint",
-		gone:   `SELECT NOT (EXISTS (` + v190ConstraintSQL + `$2) AND NOT EXISTS (` + v190ConstraintSQL + `$3))`,
-		args:   []any{table, from, to},
-		read: func(*sql.Tx) (*v190Record, error) {
+		gone:   `SELECT NOT EXISTS (` + v190ConstraintSQL + `$2)`,
+		args:   []any{table, from},
+		read: func(tx *sql.Tx) (*v190Record, error) {
+			if err := v190NameFree(tx, from, to, v190ConstraintHolderSQL, table, from, to); err != nil {
+				return nil, err
+			}
 			return &v190Record{Table: table, Name: from, To: to}, nil
 		},
 		up: func(r *v190Record) []string {
@@ -449,9 +591,12 @@ func v190RenameConstraint(table, from, to string) v190Step {
 func v190RenameSequence(from, to string) v190Step {
 	return v190Step{
 		action: "rename sequence",
-		gone:   `SELECT NOT (EXISTS (` + v190SequenceSQL + `$1) AND NOT EXISTS (` + v190SequenceSQL + `$2))`,
-		args:   []any{from, to},
-		read: func(*sql.Tx) (*v190Record, error) {
+		gone:   `SELECT NOT EXISTS (` + v190SequenceSQL + `$1)`,
+		args:   []any{from},
+		read: func(tx *sql.Tx) (*v190Record, error) {
+			if err := v190NameFree(tx, from, to, v190RelationHolderSQL, to); err != nil {
+				return nil, err
+			}
 			return &v190Record{Name: from, To: to}, nil
 		},
 		up: func(r *v190Record) []string {
@@ -490,14 +635,23 @@ func v190DropTable(table string) v190Step {
 		gone: `SELECT NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
 			WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND c.relname = $1)`,
 		args: []any{table},
-		read: func(tx *sql.Tx) (*v190Record, error) { return v190ReadTable(tx, table) },
+		read: func(tx *sql.Tx) (*v190Record, error) {
+			if err := v190NoDependents(tx, "table "+table, v190GoingTable, table); err != nil {
+				return nil, err
+			}
+			return v190ReadTable(tx, table)
+		},
 		up: func(r *v190Record) []string {
 			return []string{`DROP TABLE ` + r.Table}
 		},
 		down: func(r *v190Record) []string {
 			var out []string
 			for _, s := range r.Sequences {
-				out = append(out, `CREATE SEQUENCE `+s.Name)
+				create := `CREATE SEQUENCE ` + s.Name
+				if s.Type != "" {
+					create += ` AS ` + s.Type
+				}
+				out = append(out, create)
 			}
 			cols := make([]string, len(r.Columns))
 			for i, c := range r.Columns {
@@ -545,9 +699,18 @@ func v190ReadTable(tx *sql.Tx, table string) (*v190Record, error) {
 	if r.Indexes, err = v190Indexes(tx, table, ""); err != nil {
 		return nil, err
 	}
-	seqs, err := v190ReadNamed(tx, `SELECT s.relname, a.attname
+	if r.Sequences, err = v190Sequences(tx, table); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// v190Sequences are the sequences a table's columns own.
+func v190Sequences(tx *sql.Tx, table string) ([]v190Sequence, error) {
+	rows, err := tx.Query(`SELECT s.relname, a.attname, format_type(q.seqtypid, NULL)
 		  FROM pg_depend d
 		  JOIN pg_class s ON s.oid = d.objid AND s.relkind = 'S'
+		  JOIN pg_sequence q ON q.seqrelid = s.oid
 		  JOIN pg_class t ON t.oid = d.refobjid
 		  JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
 		  JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = d.refobjsubid
@@ -557,10 +720,16 @@ func v190ReadTable(tx *sql.Tx, table string) (*v190Record, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, s := range seqs {
-		r.Sequences = append(r.Sequences, v190Sequence{Name: s.Name, Column: s.Def})
+	defer rows.Close()
+	var out []v190Sequence
+	for rows.Next() {
+		var s v190Sequence
+		if err := rows.Scan(&s.Name, &s.Column, &s.Type); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
 	}
-	return r, nil
+	return out, rows.Err()
 }
 
 // v190ColumnDef is a column definition for CREATE TABLE or ADD COLUMN.

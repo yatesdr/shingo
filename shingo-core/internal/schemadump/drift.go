@@ -6,10 +6,17 @@ package schemadump
 // catalog showed (design record, outside the repo). Migration 190
 // (store/migration_v190.go) removes each where it finds it.
 //
-// Where the record gives a table only by name (db_test, payload_instances)
-// or by its columns' names (lane_access), the shape here is a stand-in: the
-// migration reads whatever the catalog holds, so any shape proves it, and
-// the drift report names an extra table by its name alone.
+// payload_instances is the plant's own definition, as its catalog holds it
+// (schema only): shingo's first payloads table under a later name, which kept
+// that table's key, its unique code, its foreign key and its id sequence by
+// their payloads_* names. Those names are schema-wide and the rebuilt payloads
+// table wants them back, so the shape is what decides whether migration 190
+// can run: a stand-in proved it on a database that could not fail.
+//
+// db_test and lane_access were made by hand at the plants (no release created
+// either), so each is a stand-in with the kinds of object the plant's holds:
+// db_test an integer id with the sequence it owns, lane_access a key and
+// indexes.
 
 // DriftA is the first plant's: payloads rebuilt by an old copy-migration (the
 // key, the unique code and the id sequence under a "1" name, plus two columns
@@ -26,23 +33,27 @@ ALTER TABLE payloads RENAME CONSTRAINT payloads_code_key TO payloads_code_key1;
 ALTER SEQUENCE payloads_id_seq RENAME TO payloads_id_seq1;
 ALTER TABLE nodes ALTER COLUMN node_type_id TYPE integer, ALTER COLUMN parent_id TYPE integer;
 ALTER TABLE nodes ADD CONSTRAINT nodes_node_type_id_fkey FOREIGN KEY (node_type_id) REFERENCES node_types(id);
-CREATE TABLE db_test (id integer, note text);
+CREATE TABLE db_test (id serial PRIMARY KEY, note text);
 INSERT INTO db_test VALUES (1, 'x');
+CREATE SEQUENCE payloads_id_seq;
 CREATE TABLE payload_instances (
-	id bigserial PRIMARY KEY,
-	style_id bigint NOT NULL,
-	node_id bigint REFERENCES nodes(id),
-	tag_id text NOT NULL DEFAULT '',
-	status text NOT NULL DEFAULT 'empty',
-	uop_remaining integer NOT NULL DEFAULT 0,
-	claimed_by bigint REFERENCES orders(id),
-	loaded_at timestamptz,
-	delivered_at timestamptz NOT NULL DEFAULT now(),
-	notes text NOT NULL DEFAULT '',
-	created_at timestamptz NOT NULL DEFAULT now(),
-	updated_at timestamptz NOT NULL DEFAULT now()
+	id bigint DEFAULT nextval('payloads_id_seq'::regclass) NOT NULL,
+	code text NOT NULL,
+	description text DEFAULT ''::text NOT NULL,
+	uop_capacity integer DEFAULT 0 NOT NULL,
+	default_manifest_json text DEFAULT '{}'::text NOT NULL,
+	created_at timestamp with time zone DEFAULT now() NOT NULL,
+	updated_at timestamp with time zone DEFAULT now() NOT NULL,
+	bin_id bigint,
+	manifest_confirmed boolean DEFAULT false NOT NULL,
+	tag_id text DEFAULT ''::text NOT NULL,
+	uop_remaining integer DEFAULT 0 NOT NULL,
+	loaded_at text
 );
-CREATE INDEX idx_payload_instances_node ON payload_instances (node_id);
+ALTER SEQUENCE payloads_id_seq OWNED BY payload_instances.id;
+ALTER TABLE payload_instances ADD CONSTRAINT payloads_pkey PRIMARY KEY (id);
+ALTER TABLE payload_instances ADD CONSTRAINT payloads_code_key UNIQUE (code);
+ALTER TABLE payload_instances ADD CONSTRAINT payloads_bin_id_fkey FOREIGN KEY (bin_id) REFERENCES bins(id);
 `
 
 // DriftB is the second plant's: the same missing column default, a column on

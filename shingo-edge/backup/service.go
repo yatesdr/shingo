@@ -163,6 +163,9 @@ func (s *Service) StageRestore(ctx context.Context, key string) error {
 	if manifest.StationID != stationID {
 		return fmt.Errorf("backup station ID %q does not match current station %q", manifest.StationID, stationID)
 	}
+	if err := checkArchiveData(archiveData, stationID); err != nil {
+		return err
+	}
 	if err := StageRestoreArchive(s.configPath, key, bytesReader(archiveData), stationID); err != nil {
 		return err
 	}

@@ -543,7 +543,65 @@ echo "    stamping version=${BUILD_VERSION} commit=${BUILD_COMMIT}"
 (cd "$REPO_ROOT/shingo-edge" && "$GO_BIN" build \
     -ldflags "-s -w -X main.Version=${BUILD_VERSION} -X main.Commit=${BUILD_COMMIT}" \
     -o /tmp/shingoedge ./cmd/shingoedge)
+chmod 755 /tmp/shingoedge
 echo "==> Build succeeded"
+
+# ----------------------------------------------------------------------
+# Can the new build start on this database? Asked before anything stops.
+# ----------------------------------------------------------------------
+# The new binary's own `migrate check` reads the database (and a staged
+# restore, which the next start would put in its place) and answers with the
+# decision its start would make, writing nothing. A database this build will
+# not start on (one from before the release its baseline retires, one a newer
+# release wrote) is refused here, by name, while the old Edge still runs,
+# instead of by a crash loop after the stop. Exit 1 is that refusal; exit 2 is
+# a file the check could not read, which the new Edge could not start on
+# either (pinned by the TestMigrateCheck tests in cmd/shingoedge).
+#
+# It runs as the user that owns what it reads, from the directory the Edge
+# reads a relative database_path against.
+CHECK_CONFIG=""
+CHECK_CWD=/tmp
+CHECK_AS=shingo
+CHECK_TMP=""
+if [ "$MODE" = "MIGRATION" ]; then
+    CHECK_CONFIG="$LEGACY_CONFIG"
+    CHECK_CWD=$(dirname "$LEGACY_CONFIG")
+    CHECK_AS=$(stat -c %U "${LEGACY_DB:-$LEGACY_CONFIG}")
+elif [ "$FHS_CONFIG_EXISTS" = "yes" ]; then
+    CHECK_CONFIG=/etc/shingo/shingoedge.yaml
+    if [ -d /opt/shingo ]; then CHECK_CWD=/opt/shingo; fi
+elif [ "$FHS_DB_EXISTS" = "yes" ]; then
+    # The database stands and its config is gone: the placeholder this run
+    # writes will name this path.
+    CHECK_TMP=$(mktemp -d)
+    chmod 755 "$CHECK_TMP"
+    CHECK_CONFIG="$CHECK_TMP/shingoedge.yaml"
+    echo "database_path: /var/lib/shingo-edge/shingoedge.db" > "$CHECK_CONFIG"
+    chmod 644 "$CHECK_CONFIG"
+fi
+if [ -z "$CHECK_CONFIG" ]; then
+    echo "==> No Edge config or database yet: nothing to check (the Edge is born on the schema when it starts)"
+else
+    echo "==> Checking the database with the new build ($CHECK_CONFIG; writes nothing)..."
+    check_rc=0
+    check_out=$(cd "$CHECK_CWD" && runuser -u "$CHECK_AS" -- /tmp/shingoedge migrate -config "$CHECK_CONFIG" check 2>&1) || check_rc=$?
+    printf '%s\n' "$check_out" | sed 's/^/    /'
+    if [ -n "$CHECK_TMP" ]; then rm -rf "$CHECK_TMP"; fi
+    if [ "$check_rc" -ne 0 ]; then
+        case "$check_rc" in
+            1) echo "ERROR: the new build would not start on this database (migrate check refused it)."
+               echo "       Do what the sentence above says, then rerun." ;;
+            2) echo "ERROR: migrate check could not read the database, its config or a staged restore (exit 2; the reason is above)."
+               echo "       Fix that, then rerun." ;;
+            *) echo "ERROR: migrate check did not run (exit $check_rc): the reason is above, not the database."
+               echo "       (126: /tmp/shingoedge could not be executed, e.g. a noexec /tmp; 127: runuser missing.)" ;;
+        esac
+        echo "       Nothing was stopped: the service is as it was, on the previous build."
+        rm -f /tmp/shingoedge
+        exit 1
+    fi
+fi
 
 # ----------------------------------------------------------------------
 # FHS directories
@@ -706,18 +764,30 @@ fi
 #
 # This is the artifact you fall back to when a repair or migration goes
 # wrong, so it has to be restorable, not merely present.
+# ROOT'S ALONE, AND NOT IN /tmp. The tarball holds the config (the signing
+# key, the backup store's keys) and the whole database, and after a migration
+# that drops columns it is the only copy of what they held. It sits under
+# root-owned /var/backups and not in /var/lib/shingo-edge, which the service
+# user owns and could swap a directory of. The directory is 0700 and the file
+# is 0600 from its creation (the umask below), never by a later chmod.
+BACKUP_DIR=/var/backups/shingo-edge
+mkdir -p /var/backups
+if [ -L "$BACKUP_DIR" ]; then
+    echo "ERROR: $BACKUP_DIR is a symlink; refusing to write the backup through it."
+    exit 1
+fi
+install -d -m 0700 -o root -g root "$BACKUP_DIR"
 BACKUP_TS=$(date +%Y%m%d-%H%M%S)
-BACKUP_PATH="/tmp/shingo-pre-install-${BACKUP_TS}.tar.gz"
+BACKUP_PATH="${BACKUP_DIR}/shingo-pre-install-${BACKUP_TS}.tar.gz"
 echo "==> Creating backup at ${BACKUP_PATH}"
 
 # Prune older backups before creating the new one — keep the most
-# recent 3. systemd-tmpfiles also cleans /tmp at the OS level on a
-# 10-day window, but on Pi SD cards the SQLite DB makes each tarball
-# meaningful (tens to hundreds of MB) so we don't want to wait. ls -t
+# recent 3. On Pi SD cards the SQLite DB makes each tarball meaningful
+# (tens to hundreds of MB) and nothing else cleans this directory. ls -t
 # orders by mtime newest-first; tail -n +4 skips the first 3 and
 # emits everything older. xargs -r is a no-op when input is empty
 # (fresh install, no prior backups).
-ls -1t /tmp/shingo-pre-install-*.tar.gz 2>/dev/null | tail -n +4 | xargs -r rm -f || true
+ls -1t "$BACKUP_DIR"/shingo-pre-install-*.tar.gz 2>/dev/null | tail -n +4 | xargs -r rm -f || true
 
 BACKUP_FILES=()
 for f in "$LEGACY_DB" "${LEGACY_DB}-wal" "${LEGACY_DB}-shm" "${LEGACY_DB}-journal" \
@@ -732,7 +802,7 @@ if [ ${#BACKUP_FILES[@]} -gt 0 ]; then
     # No `|| true`. A backup that failed silently is indistinguishable from
     # one that succeeded right up until you need it, and everything below
     # this line mutates the DB or the binary.
-    if ! tar czf "$BACKUP_PATH" "${BACKUP_FILES[@]}"; then
+    if ! (umask 077; tar czf "$BACKUP_PATH" "${BACKUP_FILES[@]}"); then
         echo "ERROR: backup failed; aborting before touching the DB or binary."
         echo "       files: ${BACKUP_FILES[*]}"
         exit 1
@@ -783,9 +853,10 @@ done
 # the mv above put the new build back). Otherwise the live binary goes into the
 # slot, copied to a temp name and renamed, so a failed copy leaves the old slot.
 # A fresh install (no live binary) writes none. The Edge has no down step, so,
-# unlike Core's, the slot needs no record. For a release older than the slot's:
-# the backup in /tmp/shingo-pre-install-*.tar.gz (config + DB) plus a checkout
-# of that release's tag and a reinstall.
+# unlike Core's, the slot needs no record: each Edge migration leaves the
+# release before it able to run. For a release older than the slot's: the
+# backup in /var/backups/shingo-edge/shingo-pre-install-*.tar.gz (config + DB,
+# root's alone) plus a checkout of that release's tag and a reinstall.
 if [ -f /opt/shingo/shingoedge ]; then
     NEW_SHA=$(sha256sum /tmp/shingoedge 2>/dev/null | cut -d' ' -f1 || true)
     LIVE_SHA=$(sha256sum /opt/shingo/shingoedge 2>/dev/null | cut -d' ' -f1 || true)
@@ -1001,22 +1072,65 @@ fi
 # ----------------------------------------------------------------------
 echo "==> Starting shingo-edge..."
 systemctl start shingo-edge
+# The restart counter is read AFTER the start: a manual start resets NRestarts
+# to 0. Only a rise from here is a crash loop.
+RESTARTS_BEFORE=$(systemctl show shingo-edge -p NRestarts --value 2>/dev/null || echo 0)
 
-echo "==> Waiting up to 30s for service to become active..."
-ACTIVE=no
-for i in $(seq 1 30); do
-    if systemctl is-active --quiet shingo-edge; then
-        ACTIVE=yes
+# install_failed says why the install did not take and prints the way back.
+install_failed() {
+    echo "ERROR: $1"
+    echo "The install FAILED. Recent journal:"
+    journalctl -u shingo-edge -n 50 --no-pager || true
+    if [ -f /opt/shingo/shingoedge.previous ]; then
+        echo "To go back to the build this install replaced:"
+        echo "  sudo systemctl stop shingo-edge"
+        echo "  sudo mv /opt/shingo/shingoedge.previous /opt/shingo/shingoedge"
+        echo "  sudo systemctl start shingo-edge"
+    fi
+    echo "Backup: $BACKUP_PATH"
+    exit 1
+}
+
+# WAIT FOR THE EDGE TO ANSWER /status, NOT FOR is-active. The unit is
+# Type=simple with Restart=always, so it reads active the moment the process
+# exists: while it is still migrating, and while it crash-loops on a database
+# it refuses (every 5 s, active each time). The web server starts after the
+# database is open (cmd/shingoedge main), so /status answering 200 means the
+# schema is settled. A fresh box answers too: the Edge serves with nothing
+# configured. A restart counter that rises while waiting is a crash loop: stop
+# there and show why.
+WEB_PORT=8081
+WEB_HOST=127.0.0.1
+if [ -f /etc/shingo/shingoedge.yaml ]; then
+    # The web block's port and host, CRLF-tolerant. A host bound to every
+    # address (or none named) is reached on loopback; a named one, on itself.
+    cfg_port=$(tr -d '\r' < /etc/shingo/shingoedge.yaml \
+               | awk '/^web:/{w=1; next} /^[^[:space:]#]/{w=0} w && $1=="port:" {print $2; exit}' | tr -d "\"' ")
+    case "$cfg_port" in ''|*[!0-9]*) ;; *) WEB_PORT="$cfg_port" ;; esac
+    cfg_host=$(tr -d '\r' < /etc/shingo/shingoedge.yaml \
+               | awk '/^web:/{w=1; next} /^[^[:space:]#]/{w=0} w && $1=="host:" {print $2; exit}' | tr -d "\"' ")
+    case "$cfg_host" in ''|0.0.0.0|::|'[::]'|localhost) ;; *) WEB_HOST="$cfg_host" ;; esac
+fi
+STATUS_URL="http://${WEB_HOST}:${WEB_PORT}/status"
+STATUS_WAIT_S=300
+echo "==> Waiting up to ${STATUS_WAIT_S}s for the Edge to answer ${STATUS_URL}"
+echo "    (a release that migrates the database answers only when the migration is done)"
+ANSWERED=no
+wait_start=$SECONDS
+while [ $((SECONDS - wait_start)) -lt "$STATUS_WAIT_S" ]; do
+    status_code=$(curl -s -o /dev/null -w '%{http_code}' -m 5 "$STATUS_URL" 2>/dev/null || true)
+    if [ "$status_code" = "200" ]; then
+        ANSWERED=yes
         break
+    fi
+    restarts_now=$(systemctl show shingo-edge -p NRestarts --value 2>/dev/null || echo 0)
+    if [ "${restarts_now:-0}" -gt "${RESTARTS_BEFORE:-0}" ]; then
+        install_failed "shingo-edge restarted while starting (NRestarts ${RESTARTS_BEFORE} -> ${restarts_now}): it is crash-looping."
     fi
     sleep 1
 done
-
-if [ "$ACTIVE" != "yes" ]; then
-    echo "ERROR: shingo-edge did not become active within 30s."
-    echo "Recent journal:"
-    journalctl -u shingo-edge -n 50 --no-pager || true
-    exit 1
+if [ "$ANSWERED" != "yes" ]; then
+    install_failed "shingo-edge did not answer ${STATUS_URL} within ${STATUS_WAIT_S}s."
 fi
 
 # "active" is not the same as "running the binary we just installed". A process
@@ -1028,9 +1142,9 @@ fi
 #
 # ON systemd 255 AND LATER, MainPID IS systemd-executor FOR A MOMENT. systemd
 # starts a service through systemd-executor, which then execs the binary, and a
-# Type=simple unit reads active before that exec. This installer waits only for
-# active, on every install, so a single read here can see the executor and stop
-# with "running an unexpected binary". Measured 2026-11-21 for install-core.sh,
+# Type=simple unit reads active before that exec. The wait above is past it, but
+# a restart just after that answer can show the executor, and a single read
+# would stop with "running an unexpected binary". Measured 2026-11-21 for install-core.sh,
 # which had the same read on a fresh box (systemd 259, Ubuntu 26.04 under WSL;
 # fixed there in 19a9c740); this one shares the code. So the check looks again,
 # for up to 15 s, while MainPID is missing or is the executor; a deleted or
@@ -1110,7 +1224,7 @@ echo ""
 echo "============================================================"
 echo " shingo-edge install complete"
 echo "============================================================"
-echo " Service status: active"
+echo " Service status: answering ${STATUS_URL}"
 echo " Binary:  /opt/shingo/shingoedge"
 echo " Config:  /etc/shingo/shingoedge.yaml"
 echo " DB:      /var/lib/shingo-edge/shingoedge.db"

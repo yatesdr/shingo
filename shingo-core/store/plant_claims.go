@@ -17,9 +17,9 @@ func (db *DB) ReplacePlantClaims(processID string, styles []plantclaims.StyleRow
 
 // ReplacePlantClaimsFromStation is ReplacePlantClaims recording the publishing
 // station and the report's positions; it returns the station the mirror named
-// before (see
+// before and whether the claimed nodes moved (see
 // plantclaims.ReplaceProcessFromStation).
-func (db *DB) ReplacePlantClaimsFromStation(processID, stationID string, styles []plantclaims.StyleRow, claims []plantclaims.ClaimRow, positions []string, staleGuardConfigGen int64) (string, error) {
+func (db *DB) ReplacePlantClaimsFromStation(processID, stationID string, styles []plantclaims.StyleRow, claims []plantclaims.ClaimRow, positions []string, staleGuardConfigGen int64) (plantclaims.Replaced, error) {
 	return plantclaims.ReplaceProcessFromStation(db.DB, processID, stationID, styles, claims, positions, staleGuardConfigGen)
 }
 
@@ -82,4 +82,16 @@ func (db *DB) PlantClaimsReportDigests(stationID string) (map[string]string, err
 // plantclaims.SharedReports.
 func (db *DB) SharedPlantClaimsReports(stationUID string) (map[string][]string, error) {
 	return plantclaims.SharedReports(db.DB, stationUID)
+}
+
+// SharedClaimedNodes lists the physical nodes a station shares with another
+// where one side is a claim. See plantclaims.SharedNodes.
+func (db *DB) SharedClaimedNodes(stationUID string) ([]plantclaims.SharedNode, error) {
+	return plantclaims.SharedNodes(db.DB, stationUID)
+}
+
+// NodesClaimedElsewhere maps each physical node other stations claim to those
+// stations' uids. See plantclaims.ClaimedElsewhere.
+func (db *DB) NodesClaimedElsewhere(stationUID string) (map[string][]string, error) {
+	return plantclaims.ClaimedElsewhere(db.DB, stationUID)
 }

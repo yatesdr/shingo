@@ -24,8 +24,8 @@ import (
 //
 // It rides the UPDATE each path already makes, so addressing costs no
 // statement. Scanned by ScanLifecycleAddress, in this order; the service
-// applies the rule (service.landingStations), so the landing and the
-// announcements share one spelling on both sides.
+// applies the rule (service.lifecycleStations): the landing's, except that
+// several claimants are each told.
 var LifecycleAddressSQL = helpers.NodeNotASeatSQL + `,
 	COALESCE((SELECT string_agg(cs.station_uid, ',' ORDER BY cs.station_uid)
 	            FROM nodes an, LATERAL (` + plantclaims.ClaimingStationsSQL("an.name") + `) cs

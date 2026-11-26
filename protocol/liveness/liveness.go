@@ -7,6 +7,9 @@
 // with every goroutine's stack and reports it until the loop leaves, then logs
 // that it recovered. Alarm only; nothing is restarted.
 //
+// A failure no turn can show (a loop that takes no turn at all) is registered
+// as a Condition, which judges itself and brings its own words.
+//
 // Wall time throughout: the sim's clock runs ahead, and a freeze is a real-time
 // fact. Each mark is one atomic store; the watch reads them every 5 s.
 package liveness
@@ -31,6 +34,10 @@ type Loop struct {
 	name    string
 	since   atomic.Int64 // wall unix nanos the current turn entered; 0 idle
 	alarmed atomic.Bool
+
+	// A condition's (Watch.Condition); held is nil on a loop that marks turns.
+	says string
+	held func(now time.Time) time.Duration
 }
 
 // Enter marks the start of a turn.
@@ -63,15 +70,32 @@ func (l *Loop) stuck(now time.Time) time.Duration {
 	return now.Sub(time.Unix(0, s))
 }
 
+// stall is the loop's alarm as of now, and whether it is raised: a turn past
+// the limit, or a condition that holds.
+func (l *Loop) stall(now time.Time) (Stall, bool) {
+	if l.held != nil {
+		d := l.held(now)
+		return Stall{Loop: l.name, For: d, says: l.says}, d > 0
+	}
+	d := l.stuck(now)
+	return Stall{Loop: l.name, For: d}, d >= Limit
+}
+
 // Stall is one frozen loop as the page shows it.
 type Stall struct {
 	Loop string        `json:"loop"`
 	For  time.Duration `json:"for_ns"`
+
+	says string // a condition's words, "" for a turn
 }
 
 // Sentence is the stall in the page's words.
 func (s Stall) Sentence() string {
-	return fmt.Sprintf("%s has not turned over for %s", s.Loop, s.For.Round(time.Second))
+	d := s.For.Round(time.Second)
+	if s.says != "" {
+		return fmt.Sprintf(s.says, d)
+	}
+	return fmt.Sprintf("%s has not turned over for %s", s.Loop, d)
 }
 
 // Watch holds a process's loops and alarms on a frozen one.
@@ -94,6 +118,17 @@ func (w *Watch) Loop(name string) *Loop {
 	return l
 }
 
+// Condition registers an alarm that is no loop's turn. held, asked at each read
+// of the watch, returns how long the condition has held, 0 while it does not;
+// it applies its own threshold. says is the alarm's sentence, with one %s for
+// that duration; name is what the recovery line uses. Called at wiring, before
+// Run; a no-op on a nil watch.
+func (w *Watch) Condition(name, says string, held func(now time.Time) time.Duration) {
+	if w != nil {
+		w.loops = append(w.loops, &Loop{name: name, says: says, held: held})
+	}
+}
+
 // Run reads the loops every 5 s until stop closes.
 func (w *Watch) Run(stop <-chan struct{}) {
 	t := time.NewTicker(checkEvery)
@@ -112,20 +147,20 @@ func (w *Watch) Run(stop <-chan struct{}) {
 // recovery once it leaves the turn.
 func (w *Watch) check(now time.Time) {
 	for _, l := range w.loops {
-		d := l.stuck(now)
+		s, raised := l.stall(now)
 		switch {
-		case d >= Limit && !l.alarmed.Load():
+		case raised && !l.alarmed.Load():
 			l.alarmed.Store(true)
 			w.logf("FROZEN: %s; every goroutine follows (alarm only, nothing is restarted)\n%s",
-				Stall{Loop: l.name, For: d}.Sentence(), w.dump())
-		case d < Limit && l.alarmed.Load():
+				s.Sentence(), w.dump())
+		case !raised && l.alarmed.Load():
 			l.alarmed.Store(false)
 			w.logf("FROZEN cleared: %s turned over again", l.name)
 		}
 	}
 }
 
-// Frozen lists the loops past the limit now.
+// Frozen lists the loops past the limit and the conditions that hold, now.
 func (w *Watch) Frozen() []Stall {
 	if w == nil {
 		return nil
@@ -133,8 +168,8 @@ func (w *Watch) Frozen() []Stall {
 	now := time.Now()
 	var out []Stall
 	for _, l := range w.loops {
-		if d := l.stuck(now); d >= Limit {
-			out = append(out, Stall{Loop: l.name, For: d})
+		if s, raised := l.stall(now); raised {
+			out = append(out, s)
 		}
 	}
 	return out

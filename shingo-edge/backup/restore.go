@@ -9,10 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-
-	"gopkg.in/yaml.v3"
-
-	"shingoedge/config"
 )
 
 func ApplyPendingRestore(configPath string, logf func(string, ...any)) error {
@@ -146,34 +142,46 @@ func restoreArchivePath(configPath, archivePath, expectedStationID string) error
 	}
 	defer os.RemoveAll(tmpDir)
 
-	manifest, files, err := extractArchive(archivePath, tmpDir)
+	u, err := readBackup(archivePath, expectedStationID, tmpDir)
 	if err != nil {
 		return err
 	}
-	if err := verifyManifest(manifest, files); err != nil {
+	if err := u.checkSchema(); err != nil {
 		return err
 	}
-	if expectedStationID != "" && manifest.StationID != expectedStationID {
-		return fmt.Errorf("backup station ID %q does not match expected station %q", manifest.StationID, expectedStationID)
-	}
-
-	cfgData, err := os.ReadFile(files[ConfigEntryName])
-	if err != nil {
-		return fmt.Errorf("read restored config: %w", err)
-	}
-	restoredCfg := config.Defaults()
-	if err := yaml.Unmarshal(cfgData, restoredCfg); err != nil {
-		return fmt.Errorf("parse restored config: %w", err)
-	}
-	dbData, err := os.ReadFile(files[DBEntryName])
+	dbData, err := os.ReadFile(u.dbFilePath)
 	if err != nil {
 		return fmt.Errorf("read restored db: %w", err)
 	}
-	if err := atomicWrite(configPath, cfgData, 0o644); err != nil {
+	if err := atomicWrite(configPath, u.config, 0o644); err != nil {
 		return fmt.Errorf("write restored config: %w", err)
 	}
-	if err := atomicWrite(restoredCfg.DatabasePath, dbData, 0o644); err != nil {
+	if err := replaceDatabase(u.restored.DatabasePath, dbData); err != nil {
 		return fmt.Errorf("write restored db: %w", err)
+	}
+	return nil
+}
+
+// replaceDatabase puts data in place as the database at path. The sidecars go
+// between the write and the rename: SQLite replays a -wal, and rolls back a
+// hot -journal, onto whatever file has the database's name, so either left by
+// a killed Edge would undo the restore
+// (TestRestore_AfterACrashPutsTheBackupInPlace). Removed no earlier, so a
+// write that fails leaves the live database whole.
+func replaceDatabase(path string, data []byte) error {
+	next := path + ".restore"
+	if err := atomicWrite(next, data, 0o644); err != nil {
+		return err
+	}
+	for _, sidecar := range []string{"-wal", "-shm", "-journal"} {
+		if err := os.Remove(path + sidecar); err != nil && !os.IsNotExist(err) {
+			_ = os.Remove(next)
+			return fmt.Errorf("remove the live database's %s: %w", sidecar, err)
+		}
+	}
+	if err := os.Rename(next, path); err != nil {
+		_ = os.Remove(next)
+		return fmt.Errorf("rename %s: %w", path, err)
 	}
 	return nil
 }

@@ -196,7 +196,7 @@ func (s *stubEngine) HeartbeatBody() *protocol.EdgeHeartbeat {
 	if s.heartbeat != nil {
 		return s.heartbeat
 	}
-	return &protocol.EdgeHeartbeat{StationID: s.cfg.StationID(), Feeds: map[string]string{}, Owned: map[string]string{}}
+	return &protocol.EdgeHeartbeat{Feeds: map[string]string{}, Owned: map[string]string{}}
 }
 func (s *stubEngine) CoreNodeKinds() domain.CoreNodeKinds {
 	return domain.CoreNodeKindsOf(s.core, s.groups, s.plantWide)

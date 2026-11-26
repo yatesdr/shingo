@@ -1,242 +1,96 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
+	"log"
 	"strings"
+	"sync"
 
 	"shingoedge/store/schema"
 )
 
-// Schema verification — the backstop for the ignored-error ALTER pattern.
+// Schema verification: after migrate, the live file is held to the baseline
+// this build ships, in one catalogue read. A table or column the baseline has
+// and the file lacks fails the start, every one named at once. Nothing
+// creates it again at a start, so a hand-dropped table is this failure and
+// not an empty table made in silence (TestBoot_TheFilesAStartTakes).
 //
-// migrate() adds columns with `db.Exec("ALTER TABLE ... ADD COLUMN ...")` and
-// deliberately discards the error, because re-adding an existing column is the
-// normal idempotent path on every already-migrated database and SQLite gives no
-// cheap way to tell that apart from a real failure. The cost of that trade is
-// that a genuine failure looks exactly like a successful no-op, and migrate()
-// returns nil either way.
-//
-// This is the backstop. After migrate() runs, assert that the objects the
-// CURRENT build actually depends on are present, and fail startup loudly —
-// listing every missing object at once — if they are not.
-//
-// It also catches a failure mode that has nothing to do with SQL. On
-// 2026-07-20 a Springfield deploy left the OLD edge binary running while the
-// new one sat on disk: systemd's Restart=always relaunched the service ~1s
-// before the installer swapped the binary. Every health signal looked correct
-// (service active, HMI 200, Kafka connected, zero errors) and the mismatch was
-// only found by querying the schema by hand. A stale binary migrates to its
-// own older schema, so its result cannot satisfy this manifest — the assertion
-// turns that silent condition into a startup failure that names the gap.
-//
-// POLICY: when you add a migration that the code then depends on, add it here.
-// Keep this list to UNCONDITIONAL migrations — the ones that run on every
-// database. Migrations guarded by a conditional (legacy-shape fixups, one-time
-// data repairs) must NOT be listed: they legitimately do not apply everywhere,
-// and asserting them would refuse to start an otherwise healthy plant.
+// Every other difference (another column, index, trigger, type or foreign key)
+// is drift: it refuses nothing, is logged once at the start, and stands on the
+// Edge's /status flag list and Diagnostics for the life of the process
+// (DriftAtBoot; engine.FeedFlags).
 
-// requiredTables are tables every migrated edge database must have.
-var requiredTables = []string{
-	"catid_holds",
-	"line_counters",
-	"orders",
-	"processes",
-	"styles",
-	"style_node_claims",
-	"process_changeovers",
-	"changeover_node_tasks",
-	"changeover_participants",
-	"process_node_runtime_states",
-	"sourcing_state",
-	// daily_counts is asserted because the retention ticker DELETES against
-	// it: PurgeRolledUpHourly only removes an hour whose day is summarised
-	// here. A stale binary whose schema.Apply never created this table would
-	// leave the purge deleting nothing forever, which is the silent-no-op
-	// failure this manifest exists to make loud.
-	// supply_refusals_open is asserted for the same reason daily_counts is: the
-	// clear-on-load path DELETES against it. A stale binary whose schema.Apply
-	// never created it would leave every LOAD failing to clear a refusal that
-	// was never stored — the card would look answered-and-stuck with nothing
-	// behind it, which is the silent-no-op failure this manifest exists to make
-	// loud.
-	"supply_refusals_open",
-	// process_groups is asserted because scanProcess selects processes.group_id
-	// unconditionally on every List/Get, and the group CRUD handlers read and
-	// write this table on every Processes-page load. A stale binary whose
-	// schema.Apply never created it would 500 the whole admin page at runtime
-	// instead of failing startup here.
-	"process_groups",
-	// process_routing_nodes is asserted because the boot-time backfill and the
-	// Processes page's Routing panel both read and write it unconditionally.
-	"process_routing_nodes",
-	// flow_presets is created by the DDL only (no ALTER road); the preset
-	// store reads and writes it unconditionally.
-	"flow_presets",
-	// process_payloads is created by the DDL only, and ProcessPalette reads it
-	// on every composer fetch — the read that decides which parts a screen may
-	// offer. A stale binary whose schema.Apply never created it would answer
-	// every part picker with an error the fetch swallows, so the picker would
-	// come up empty on a cell that has parts.
-	"process_payloads",
-	// The scene geometry cache is read at every boot (engine.loadSceneGeometry)
-	// and written by every full node-list sync. A stale binary whose
-	// schema.Apply never created these would fail the boot read and answer
-	// every sync with a rollback — a picture that never appears and a
-	// heartbeater that never quotes a revision, with nothing saying why.
-	"scene_geometry_points",
-	"scene_geometry_edges",
-	"scene_geometry_meta",
+// shippedShape is the baseline's shape, parsed once per process.
+var shippedShape = sync.OnceValue(func() schema.Shape { return schema.ParseShape(schema.Baseline) })
+
+// liveShape reads the live file's shape in one catalogue read.
+func liveShape(q *sql.DB) (schema.Shape, error) {
+	rows, err := q.Query(`SELECT sql FROM sqlite_master WHERE sql IS NOT NULL`)
+	if err != nil {
+		return nil, fmt.Errorf("read the live schema: %w", err)
+	}
+	defer rows.Close()
+	var all strings.Builder
+	for rows.Next() {
+		var stmt string
+		if err := rows.Scan(&stmt); err != nil {
+			return nil, fmt.Errorf("read the live schema: %w", err)
+		}
+		all.WriteString(stmt)
+		all.WriteString("\n;\n") // on its own line: a statement may end in a comment
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read the live schema: %w", err)
+	}
+	return schema.ParseShape(all.String()), nil
 }
 
-// requiredColumn is one (table, column) pair added by an unconditional
-// top-level migration in migrate().
-type requiredColumn struct{ table, column string }
-
-var requiredColumns = []requiredColumn{
-	{"inventory_delta_seq", "net"},
-	{"orders", "payload_code"},
-	{"orders", "sibling_order_id"},
-	{"orders", "queue_reason"},
-	{"orders", "queue_code"},
-	{"orders", "authored_by"},
-	{"orders", "fault_since"},
-	{"orders", "fault_deadline"},
-	{"orders", "fault_notice_after_s"},
-	{"orders", "fault_ref"},
-	{"orders", "departed_at"},
-	{"orders", "cell_left_at"},
-	{"style_node_claims", "mode"},
-	{"style_node_claims", "lineside_soft_threshold"},
-	{"style_node_claims", "second_paired_core_node"},
-	{"style_node_claims", "reuse_compatible_bins"},
-	{"style_node_claims", "auto_push"},
-	// Claim attribution (v40): every claim read scans all six.
-	{"style_node_claims", "source"},
-	{"style_node_claims", "called_by"},
-	{"style_node_claims", "updated_at"},
-	{"style_node_claims", "retired_at"},
-	{"style_node_claims", "source_preset_id"},
-	{"style_node_claims", "source_preset_version"},
-	{"styles", "expected_catid"},
-	{"processes", "changeover_auto_arm"},
-	{"processes", "identity_tag_name"},
-	{"process_nodes", "line_counter_id"},
-	// v45: a station counter's second tag. Every line_counters read scans
-	// all four, so a missing column kills every station counter's poll.
-	{"line_counters", "tag_name_2"},
-	{"line_counters", "last_count_2"},
-	{"line_counters", "last_poll_at_2"},
-	{"line_counters", "warlink_managed_2"},
-	// v43: the seat's last release, and the ledger's record of it.
-	{"process_node_runtime_states", "released_bin_id"},
-	{"process_node_runtime_states", "released_count"},
-	{"process_node_runtime_states", "released_at"},
-	{"catid_holds", "last_bin_id"},
-	{"catid_holds", "last_declared"},
-	{"catid_holds", "last_left_at"},
-	{"processes", "identity_none"},
-	{"processes", "identity_warlink_managed"},
-	{"process_changeovers", "triggered_by"},
-	{"process_changeovers", "verify_live_catid"},
-	{"counter_snapshots", "catid"},
-	{"process_changeovers", "start_catid"},
-	{"process_changeovers", "end_catid"},
-	{"payload_catalog", "catid"},
-	{"changeover_node_tasks", "skip_note"},
-	{"process_node_runtime_states", "remaining_uop_cached"},
-	// The lineside identity columns. scanRuntime SELECTs all four
-	// unconditionally, so a failed ALTER does not degrade the identity read —
-	// it kills every runtime-row query on the box, which is a per-node work
-	// stoppage. lineside_payload_code shipped without an entry here.
-	{"process_node_runtime_states", "lineside_payload_code"},
-	{"process_node_runtime_states", "lineside_payload_known"},
-	{"process_node_runtime_states", "lineside_source"},
-	{"process_node_runtime_states", "lineside_at"},
-	// Every statement that moves active_bin_id writes both, so a failed ALTER
-	// would kill every bind and every clear on the box.
-	{"process_node_runtime_states", "last_bin_id"},
-	{"process_node_runtime_states", "last_bin_epoch"},
-	// Written by the fenced count; a failed ALTER would fail every fenced
-	// count adjustment (the handler then logs and keeps the old count).
-	{"process_node_runtime_states", "adj_bin_id"},
-	{"process_node_runtime_states", "adj_bin_epoch"},
-	{"process_node_runtime_states", "adj_as_of_seq"},
-	// The held part and the released-empty flag (v19, D12): scanRuntime
-	// SELECTs both, so a missing column kills every runtime-row read.
-	{"process_node_runtime_states", "pending_uop_payload"},
-	{"process_node_runtime_states", "released_empty"},
-	// The landing's placement stamp (v20, D10): every landing bind names it
-	// in its SET and WHERE, so a missing column fails every landing.
-	{"process_node_runtime_states", "placed_seq"},
-	// The produce seat's stop flag (v49): scanRuntime SELECTs it and every
-	// seat-guarded write names it, so a missing column kills every tick.
-	{"process_node_runtime_states", "hold_stopped"},
-	// The position's auto-reorder hold (v51): scanRuntime SELECTs all three,
-	// so a missing column kills every runtime-row read.
-	{"process_node_runtime_states", "reorder_hold"},
-	{"process_node_runtime_states", "reorder_hold_at"},
-	{"process_node_runtime_states", "reorder_hold_note"},
-	// The position's last go (v52): scanRuntime SELECTs it.
-	{"process_node_runtime_states", "reorder_go_at"},
-	// group_id is an ALTER-added column that scanProcess selects
-	// unconditionally; an ignored-error failure would kill every process
-	// query at runtime rather than at startup.
-	{"processes", "group_id"},
-	// flow_composer_enabled is scanned by every process List/Get, like group_id.
-	{"processes", "flow_composer_enabled"},
-	// The station switch's setting (v53): scanProcess selects it.
-	{"processes", "auto_reorder_switch_hmi"},
-	// The idle rule's clocks (v54): every reporting-point read selects
-	// last_part_at, every order read staged_at.
-	{"reporting_points", "last_part_at"},
-	{"orders", "staged_at"},
-	// The curtain interlock's node columns: scanNode selects all four, so a
-	// failed ALTER would kill every process_nodes read on the box.
-	{"process_nodes", "curtain_enabled"},
-	{"process_nodes", "curtain_plc_name"},
-	{"process_nodes", "curtain_tag_name"},
-	{"process_nodes", "curtain_safe_value"},
+// compareSchema holds the live file to the shipped baseline.
+func compareSchema(q *sql.DB) (missing, differs []string, err error) {
+	want := shippedShape()
+	if len(want) < 100 {
+		return nil, nil, fmt.Errorf("schema verify: read %d objects out of the baseline: the parser or the file is broken, not the database", len(want))
+	}
+	got, err := liveShape(q)
+	if err != nil {
+		return nil, nil, fmt.Errorf("schema verify: %w", err)
+	}
+	missing, differs = schema.Compare(want, got)
+	return missing, differs, nil
 }
 
-// verifySchema reports every required table and column that is missing. It
-// collects the full list rather than failing on the first gap: when this fires
-// during a deploy, the operator needs to see the whole picture at once to tell
-// a stale binary (many objects missing) from a single failed migration (one).
+// missingObjects is the refusal of a file that lacks what this build needs. It
+// lists every one: a partial restore and one dropped table read differently.
+func missingObjects(missing []string) error {
+	return &Refusal{msg: fmt.Sprintf("schema verification failed — %d required object(s) missing:\n  %s\n"+
+		"A start creates none again: restore a backup, or install %s and start it once (it creates a missing table again, empty)",
+		len(missing), strings.Join(missing, "\n  "), RetiredChainRelease)}
+}
+
+// verifySchema fails for a file that lacks a table or column this build ships,
+// and keeps every other difference as the start's drift report.
 func (db *DB) verifySchema() error {
-	var missing []string
-
-	for _, t := range requiredTables {
-		ok, err := schema.TableExists(db.DB, t)
-		if err != nil {
-			return fmt.Errorf("schema verify: checking table %s: %w", t, err)
-		}
-		if !ok {
-			missing = append(missing, "table  "+t)
-		}
+	missing, differs, err := compareSchema(db.DB)
+	if err != nil {
+		return err
 	}
-
-	for _, rc := range requiredColumns {
-		// A missing table already reported above also reports (false, nil)
-		// here; that is fine, both facts are useful in the failure output.
-		ok, err := schema.TableHasColumn(db.DB, rc.table, rc.column)
-		if err != nil {
-			return fmt.Errorf("schema verify: checking %s.%s: %w", rc.table, rc.column, err)
-		}
-		if !ok {
-			missing = append(missing, "column "+rc.table+"."+rc.column)
-		}
+	if len(missing) > 0 {
+		return missingObjects(missing)
 	}
+	for _, d := range differs {
+		line := "schema drift: " + d
+		log.Printf("store: %s", line)
+		db.driftAtBoot = append(db.driftAtBoot, line)
+	}
+	return nil
+}
 
-	if len(missing) == 0 {
+// DriftAtBoot is the drift report Open took: nil for a file with the shape
+// this build ships, and for a DB that was not opened.
+func (db *DB) DriftAtBoot() []string {
+	if db == nil {
 		return nil
 	}
-
-	return fmt.Errorf(
-		"schema verification failed — %d required object(s) missing after migration:\n  %s\n\n"+
-			"This means the database does not match the code that is running.\n"+
-			"Most common cause: the service is running an OLD binary (a deploy that\n"+
-			"swapped the file but never restarted the process onto it). Check with:\n"+
-			"  readlink /proc/$(systemctl show shingo-edge -p MainPID --value)/exe\n"+
-			"A trailing \"(deleted)\" there confirms it; `systemctl restart shingo-edge` fixes it.",
-		len(missing), strings.Join(missing, "\n  "))
+	return db.driftAtBoot
 }

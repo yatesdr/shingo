@@ -169,6 +169,9 @@ type Engine struct {
 	notifier         *notify.Notifier
 	stopChan         chan struct{}
 	stopOnce         sync.Once
+	// stopWait bounds each join of Stop; 0 is fulfillment.StopJoinLimit. A test
+	// shortens it.
+	stopWait time.Duration
 	// after runs what a synchronous subscriber must not do on the emitter's
 	// goroutine: acquire an order, or create one that is then acquired
 	// (after.go). Built in New; its goroutine starts in Start.

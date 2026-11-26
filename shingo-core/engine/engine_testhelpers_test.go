@@ -130,3 +130,12 @@ func (q *afterQueue) settle() {
 	q.later(func() { close(done) })
 	<-done
 }
+
+// runAfterQueue serves the after-queue of an engine the test has not started:
+// the count hooks hand their threshold checks to it.
+func runAfterQueue(t *testing.T, eng *Engine) {
+	t.Helper()
+	stop := make(chan struct{})
+	go eng.after.run(stop)
+	t.Cleanup(func() { close(stop); eng.after.join() })
+}

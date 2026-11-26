@@ -121,8 +121,9 @@ const holdDropByRecount = "edge:recount"
 // count below the pack reopened room and the next tick replayed the hold into
 // it (SPR ALN_011, 2026-11-12: a recount of 132 to 67 read 132 again 4 s
 // later). A count that does not land writes nothing. A lifecycle count writes
-// alone and touches neither the hold nor the stop: the clear follows who
-// counted, not which statement ran. Caller holds countMu.
+// alone and touches neither the hold nor the stop: the clear follows the
+// actor on the count, not which statement ran (Core sends a person's count as
+// lifecycle at a seat several stations claim). Caller holds countMu.
 func (e *Engine) writeCountClearingHold(node *processes.Node, person bool, write func(processes.DBTX) (bool, error)) (bool, error) {
 	if !person {
 		return write(e.db.DB)

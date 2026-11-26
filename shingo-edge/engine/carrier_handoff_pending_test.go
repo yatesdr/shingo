@@ -38,7 +38,7 @@ func TestPinH5_LandingSubjectThenDeliveredKeepsTheTicks(t *testing.T) {
 	for i := 0; i < k; i++ {
 		tickConsume(eng, processID, styleID, 1)
 	}
-	deliver(t, eng, nodeID, "uuid-hpl1", "HPL1-NODE", bin, epoch, n)
+	deliver(t, eng, nodeID, "uuid-hpl1", "HPL1-NODE", bin)
 
 	if got := runtimeOf(t, eng, nodeID).RemainingUOPCached; got != n-k {
 		t.Errorf("count = %d, want %d (H.5: delivered writes no count)", got, n-k)
@@ -131,7 +131,7 @@ func TestControlH_EmptySeatLandingSubjectSeedsCoresCount(t *testing.T) {
 }
 
 // TestH5_ADeliveredFromALandingCoreBindsNothing — H.5: a delivered whose Core
-// announced the landing (LandingSent) closes the order, binds nothing and
+// announced the landing (the only Core at the floor) closes the order, binds nothing and
 // writes no count, even onto an empty seat.
 func TestH5_ADeliveredFromALandingCoreBindsNothing(t *testing.T) {
 	t.Parallel()
@@ -142,11 +142,11 @@ func TestH5_ADeliveredFromALandingCoreBindsNothing(t *testing.T) {
 
 	orderID, err := eng.db.CreateOrder("uuid-hpl6", orders.TypeRetrieve, &nodeID, false, 1, "HPL6-NODE", "", "", protocol.Height{}, false, "", "", "")
 	testutil.MustNoErr(t, err, "create order")
-	bid, n := int64(9108), 80
+	bid := int64(9108)
 	testutil.MustNoErr(t, eng.db.UpdateOrderBinID(orderID, &bid), "order bin")
 	eng.Events.Emit(Event{Type: EventOrderDelivered, Payload: OrderDeliveredEvent{
 		OrderID: orderID, OrderUUID: "uuid-hpl6", OrderType: orders.TypeRetrieve,
-		ProcessNodeID: &nodeID, BinID: &bid, BinUOP: &n, BinEpoch: 3, LandingSent: true,
+		ProcessNodeID: &nodeID, BinID: &bid, FromNotice: true,
 	}})
 
 	if rt := runtimeOf(t, eng, nodeID); rt.ActiveBinID != nil || rt.RemainingUOPCached != 0 {
@@ -154,11 +154,10 @@ func TestH5_ADeliveredFromALandingCoreBindsNothing(t *testing.T) {
 	}
 }
 
-// TestH7_AnOlderCoresDeliveredNeverDisplacesADifferentCarrier — H.7, a new
-// Edge with an older Core: the delivered's carrier fields bind through the
-// landing verb with no placement stamp, into an empty slot or onto the same
-// bin only. A different carrier bound at the seat stays.
-func TestH7_AnOlderCoresDeliveredNeverDisplacesADifferentCarrier(t *testing.T) {
+// TestH5_ADeliveredNeverDisplacesADifferentCarrier — H.5: a delivered naming
+// a carrier other than the one bound leaves the seat and its count as they
+// stand (that it is said: TestDeliveredNotBound_TheCheckCoversEveryOrigin).
+func TestH5_ADeliveredNeverDisplacesADifferentCarrier(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
@@ -166,18 +165,11 @@ func TestH7_AnOlderCoresDeliveredNeverDisplacesADifferentCarrier(t *testing.T) {
 	_, nodeID, _, _ := emptySeat(t, eng, "HPL7", "PART-HPL7", 100)
 
 	eng.HandleBinLanded(landing("HPL7-NODE", 9109, 2, 70, "PART-HPL7", 51))
-	deliver(t, eng, nodeID, "uuid-hpl7", "HPL7-NODE", 9110, 1, 100)
+	deliver(t, eng, nodeID, "uuid-hpl7", "HPL7-NODE", 9110)
 
 	rt := runtimeOf(t, eng, nodeID)
 	if rt.ActiveBinID == nil || *rt.ActiveBinID != 9109 || rt.RemainingUOPCached != 70 {
-		t.Errorf("seat = bin %v count %d, want 9109/70: an older Core's delivered displaced the carrier on the seat",
+		t.Errorf("seat = bin %v count %d, want 9109/70: a delivered displaced the carrier on the seat",
 			rt.ActiveBinID, rt.RemainingUOPCached)
-	}
-
-	// Onto an empty seat it binds, as it always did.
-	_, emptyID, _, _ := emptySeat(t, eng, "HPL8", "PART-HPL8", 100)
-	deliver(t, eng, emptyID, "uuid-hpl8", "HPL8-NODE", 9111, 1, 45)
-	if rt := runtimeOf(t, eng, emptyID); rt.ActiveBinID == nil || *rt.ActiveBinID != 9111 || rt.RemainingUOPCached != 45 {
-		t.Errorf("empty seat = bin %v count %d, want 9111/45", rt.ActiveBinID, rt.RemainingUOPCached)
 	}
 }

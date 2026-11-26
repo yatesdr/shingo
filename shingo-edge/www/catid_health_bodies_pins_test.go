@@ -54,7 +54,7 @@ var updateCatidHealthGolden = flag.Bool("update-catid-health-golden", false,
 // item5-*.txt answers brief S4 item 5 (the shared-CATID item printing one
 // style name twice, engine/catid_health.go sharedItems): two live styles of a
 // process cannot carry byte-identical names (idx_styles_process_name_live,
-// store/migrations_soft_delete.go), and the style routes store a name
+// store/schema/baseline.sql), and the style routes store a name
 // untrimmed (handlers_styles.go apiCreateStyle, apiUpdateStyle), so the item
 // names two styles whose names differ only by a trailing space. It is pinned
 // as served; nothing here fixes it.

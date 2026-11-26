@@ -34,7 +34,7 @@ func lsReport(t *testing.T, at time.Time, station string, entries ...protocol.Li
 	t.Helper()
 	env, err := protocol.NewDataEnvelope(protocol.SubjectLinesideLevelReport,
 		protocol.Address{Role: protocol.RoleEdge, Station: station}, protocol.Address{Role: protocol.RoleCore},
-		&protocol.LinesideLevelReport{Station: station, ReportedAt: at, Entries: entries})
+		&protocol.LinesideLevelReport{ReportedAt: at, Entries: entries})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,8 +120,7 @@ func TestEdge_ReadsAnEdgeDatabaseReadOnly(t *testing.T) {
 	mustExec(`INSERT INTO outbox (topic, payload, msg_type) VALUES ('orders', X'7b7d', 'inventory.bin_uop_delta')`)
 	w.Close()
 	log := "uop_adjustment: process node \"SLN_004\" not found: sql: no rows\n" +
-		"uop_adjustment: process node \"UTN_001\" not found: sql: no rows\n" +
-		"uop_adjustment: bound bin 12 to node ALN_001 (remaining=50 epoch=3, moved in Core)\n"
+		"uop_adjustment: process node \"UTN_001\" not found: sql: no rows\n"
 	if err := os.WriteFile(filepath.Join(svc, "edge.log"), []byte(log), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -143,8 +142,8 @@ func TestEdge_ReadsAnEdgeDatabaseReadOnly(t *testing.T) {
 	if e.reports != 3 || len(e.seats) != 1 || e.seats[0].starved != 5*time.Minute {
 		t.Errorf("%d report(s), seats %+v; want 3 and ALN_001 starved 5m", e.reports, e.seats)
 	}
-	if !e.logRead || e.logNotFound != 2 || e.logBound != 1 {
-		t.Errorf("log read %v: not-found %d, bound %d; want 2 and 1", e.logRead, e.logNotFound, e.logBound)
+	if !e.logRead || e.logNotFound != 2 {
+		t.Errorf("log read %v: not-found %d; want 2", e.logRead, e.logNotFound)
 	}
 
 	ro, err := openEdgeReadOnly(path)
@@ -164,9 +163,15 @@ func TestEdge_ReadsAnEdgeDatabaseReadOnly(t *testing.T) {
 func TestHandoff_PlacementsSplitByTheEdgesOwnNodesOverCoresMirror(t *testing.T) {
 	t.Parallel()
 	h := &handoffCore{
-		placements: []nodeCount{{node: "SLN_001", class: "SLN", n: 10}, {node: "ALN_001", class: "ALN", n: 4}},
-		stations:   []string{"line-1", "line-2"},
-		claims:     map[string]map[string]bool{"line-1": {"ALN_001": true}, "line-2": {}},
+		// Landings are addressed: each Edge was sent its own 14.
+		placements: []nodeCount{
+			{node: "SLN_001", class: "SLN", station: "line-1", n: 10}, {node: "ALN_001", class: "ALN", station: "line-1", n: 4},
+			{node: "SLN_001", class: "SLN", station: "line-2", n: 10}, {node: "ALN_001", class: "ALN", station: "line-2", n: 4},
+			{node: "SLN_001", class: "SLN", station: "line-9", n: 10}, {node: "ALN_001", class: "ALN", station: "line-9", n: 4},
+			{node: "ALN_001", class: "ALN", station: "line-other", n: 5}, // another Edge's: counted for none of these
+		},
+		stations: []string{"line-1", "line-2"},
+		claims:   map[string]map[string]bool{"line-1": {"ALN_001": true}, "line-2": {}},
 	}
 	edges := []*edgeReading{
 		{station: "line-2", owned: map[string]bool{"SLN_001": true}},

@@ -62,9 +62,9 @@ line 2 on Edge 2. The demo loop is a self-sustaining circle:
    `WELD-2` (PANEL-B + BRKT) turn them into ASSY.
 2. **Unloader** — `UNLOADER-A` at `FGN_001` drains ASSY. Core's `auto_push` re-pulls its next
    full when its window frees; the sim operator CLEARs after `unloader_auto_clear` and the
-   empty goes to `SYN_PRESS_EMPTIES`.
+   empty goes back to `SYN_MARKET`.
 3. **Kanban** — `SYN_PRESS_EMPTIES` keeps a level of empties beside the presses;
-   its keeper tops it up and the surplus overflows to `SYN_MARKET`.
+   its keeper alone refills it, from what comes back to `SYN_MARKET`.
 4. **Loader legs** — `PLK_X1` (CLIP → WELD-3), `PLK_X2` (STUD → WELD-4), the two-window
    BRKT loader `PLK_W1`/`PLK_W2` (→ WELD-2), and the dedicated SHIM home `PLK_H1` that `WELD-5`
    swaps against. The sim operator LOADs after `loader_auto_load`.

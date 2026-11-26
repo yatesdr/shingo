@@ -464,13 +464,15 @@ func TestOwned_AbsenceOnTheWire(t *testing.T) {
 		v    any
 		want string
 	}{
-		{"a heartbeat from an Edge without the map", EdgeHeartbeat{StationID: "edge.a", Feeds: map[string]string{}},
-			`{"station_id":"edge.a","feeds":{},"owned":null}`},
-		{"a heartbeat naming no family", EdgeHeartbeat{StationID: "edge.a", Feeds: map[string]string{}, Owned: map[string]string{}},
-			`{"station_id":"edge.a","feeds":{},"owned":{}}`},
-		{"a heartbeat quoting a family", EdgeHeartbeat{StationID: "edge.a", Feeds: map[string]string{},
+		{"a heartbeat from an Edge without the map", EdgeHeartbeat{Feeds: map[string]string{}},
+			`{"feeds":{},"owned":null}`},
+		{"a heartbeat naming no family", EdgeHeartbeat{Feeds: map[string]string{}, Owned: map[string]string{}},
+			`{"feeds":{},"owned":{}}`},
+		{"a heartbeat quoting a family", EdgeHeartbeat{Feeds: map[string]string{},
 			Owned: map[string]string{OwnedCells: "0123456789abcdef"}},
-			`{"station_id":"edge.a","feeds":{},"owned":{"cells":"0123456789abcdef"}}`},
+			`{"feeds":{},"owned":{"cells":"0123456789abcdef"}}`},
+		{"an ack with no owned answer", EdgeHeartbeatAck{StationID: "edge.a", Feeds: map[string]string{}},
+			`{"station_id":"edge.a","server_ts":"0001-01-01T00:00:00Z","feeds":{},"owned":null}`},
 		{"an answer that converged", OwnedAnswer{Digest: "0123456789abcdef"}, `{"digest":"0123456789abcdef"}`},
 		{"an answer with members", OwnedAnswer{Digest: "0123456789abcdef", Members: map[string]string{"PR1": ""}},
 			`{"digest":"0123456789abcdef","members":{"PR1":""}}`},
@@ -487,8 +489,8 @@ func TestOwned_AbsenceOnTheWire(t *testing.T) {
 		wantNil bool
 	}{
 		{`{"station_id":"edge.a","feeds":{}}`, true},
-		{`{"station_id":"edge.a","feeds":{},"owned":null}`, true},
-		{`{"station_id":"edge.a","feeds":{},"owned":{}}`, false},
+		{`{"feeds":{},"owned":null}`, true},
+		{`{"feeds":{},"owned":{}}`, false},
 	} {
 		var hb EdgeHeartbeat
 		if err := json.Unmarshal([]byte(tc.body), &hb); err != nil {

@@ -53,7 +53,7 @@ func TestSourcingFeed_TheHeartbeatSendsTheStationItsSnapshot(t *testing.T) {
 	beat := func(quoted string) *protocol.EdgeHeartbeatAck {
 		t.Helper()
 		resp.events = nil
-		svc.HandleEdgeHeartbeat(feedsPinEnv(st), &protocol.EdgeHeartbeat{StationID: st,
+		svc.HandleEdgeHeartbeat(feedsPinEnv(st), &protocol.EdgeHeartbeat{
 			Feeds: map[string]string{protocol.FeedSourcing: quoted}})
 		for _, e := range resp.events {
 			if e.kind == "reply" && e.subject == protocol.SubjectEdgeHeartbeatAck {
@@ -64,7 +64,7 @@ func TestSourcingFeed_TheHeartbeatSendsTheStationItsSnapshot(t *testing.T) {
 		return nil
 	}
 
-	svc.HandleEdgeRegister(registerEnv(st), &protocol.EdgeRegister{StationID: st, Hostname: "h", Version: "v"})
+	svc.HandleEdgeRegister(registerEnv(st), &protocol.EdgeRegister{Hostname: "h", Version: "v"})
 	if got := sends(); len(got) != 0 || len(builtFor) != 0 {
 		t.Fatalf("registration sent sourcing to %v and built %v, want neither", got, builtFor)
 	}

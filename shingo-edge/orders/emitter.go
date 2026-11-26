@@ -19,23 +19,14 @@ type EventEmitter interface {
 	// with no bin). Pass order.DeliveryNode; the handler prefers processNodeID and
 	// falls back to the name.
 	//
-	// landingSent is protocol.OrderDelivered.LandingSent: the sending Core
-	// announced the carrier's drop on transit.bin_landed, so the delivered
-	// binds nothing (Lane H, H.5); false is an older Core whose carrier fields
-	// still bind, through the landing verb (H.7).
-	EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binUOP *int, binPayloadCode *string, binEpoch int64, binDestNode, deliveryNode string, landingSent bool)
-	// EmitOrderDeliveredFallback binds the runtime cache for Core-admin orders
-	// that have no Edge order row. ProcessNodeID is resolved from deliveryNode by
-	// the engine handler. Called when HandleDeliveredWithExpiry can't find the UUID.
-	//
-	// binPayloadCode rides along for the same reason EmitOrderDelivered carries
-	// it: this is a delivery, and a delivery is one of the moments the Edge can
-	// learn what carrier is standing on a node. It was in scope at the call site
-	// and dropped, so a Core-admin straight-drop bound a claim and recorded no
-	// identity — the same envelope, the same bin row, the same fact, thrown away
-	// on the one path with no Edge order to reconstruct it from. nil is an older
-	// Core that does not send one, and records as an UNKNOWN carrier.
-	EmitOrderDeliveredFallback(binID int64, binUOP *int, binPayloadCode *string, binEpoch int64, deliveryNode string, landingSent bool)
+	// fromNotice says an order.delivered is behind the event (the notice's
+	// handler sets it; false for a version-0 reconcile snapshot).
+	EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binDestNode, deliveryNode string, fromNotice bool)
+	// EmitOrderDeliveredFallback is the order.delivered of a Core-admin order
+	// with no Edge order row (HandleDeliveredNotice did not find the UUID). The
+	// engine resolves the process node from deliveryNode for the check. The
+	// carrier's identity comes with its landing.
+	EmitOrderDeliveredFallback(binID int64, deliveryNode string)
 	// EmitOrderFailed says the order failed: code is the code Core failed it
 	// with (protocol.OrderUpdate.ErrorCode, from Core's versioned tell), "" when
 	// Core sent none or the failure is not Core's tell; reason is the history

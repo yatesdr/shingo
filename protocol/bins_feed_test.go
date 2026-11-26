@@ -122,32 +122,6 @@ func TestNodeBinsSnapshot_Golden(t *testing.T) {
 	}
 }
 
-// BinWatch on the ack: absent from a Core without the feed (nil), "" when Core
-// holds no list for the Edge, the digest when it holds one. The rest of the
-// ack's bytes are untouched by the field.
-func TestEdgeHeartbeatAck_BinWatchGolden(t *testing.T) {
-	t.Parallel()
-	none, held := "", "0123456789abcdef"
-	const head = `{"station_id":"edge.a","server_ts":"0001-01-01T00:00:00Z","feeds":{},"owned":null,"claims":{}`
-	for _, tc := range []struct {
-		name     string
-		binWatch *string
-		want     string
-	}{
-		{"a Core without the bins feed", nil, head + `}`},
-		{"no list held", &none, head + `,"bin_watch":""}`},
-		{"a list held", &held, head + `,"bin_watch":"0123456789abcdef"}`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			ack := EdgeHeartbeatAck{StationID: "edge.a", Feeds: map[string]string{}, Claims: map[string]string{}, BinWatch: tc.binWatch}
-			if got := renderTwice(t, ack); got != tc.want {
-				t.Errorf("rendered\n  %s\nwant\n  %s", got, tc.want)
-			}
-		})
-	}
-}
-
 // digestTwice takes a digest twice and fails when the two differ.
 func digestTwice(t *testing.T, f func() (string, error)) string {
 	t.Helper()

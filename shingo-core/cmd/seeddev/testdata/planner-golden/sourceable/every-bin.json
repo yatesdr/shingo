@@ -511,6 +511,26 @@
       "sourceable_sql": false
     },
     {
+      "bin": "BIN-MT-18",
+      "node": "UTN_016",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-MT-19",
+      "node": "UTN_017",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-MT-20",
+      "node": "UTN_018",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "BIN-MT-21",
+      "node": "UTN_021",
+      "sourceable_sql": false
+    },
+    {
       "bin": "BIN-PA-01",
       "payload": "PANEL-A",
       "node": "SMN_001",
@@ -989,6 +1009,56 @@
     {
       "bin": "P5-K-06",
       "node": "P5B_006",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-07",
+      "node": "P5B_007",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-08",
+      "node": "P5B_008",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-09",
+      "node": "P5B_009",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-10",
+      "node": "P5B_010",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-11",
+      "node": "P5B_011",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-12",
+      "node": "P5B_012",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-13",
+      "node": "P5B_013",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-14",
+      "node": "P5B_014",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-15",
+      "node": "P5B_015",
+      "sourceable_sql": false
+    },
+    {
+      "bin": "P5-K-16",
+      "node": "P5B_016",
       "sourceable_sql": false
     },
     {

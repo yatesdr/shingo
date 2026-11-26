@@ -73,10 +73,8 @@ type LinesideLevelEntry struct {
 // lineside levels. Core records each entry's seat in edge_lineside_reports keyed by
 // (station, core_node_name, payload_code), latest-wins on ReportedAt, and
 // compares the batch against its replica when at least one row moved. The
-// station is the envelope's src.station; Station is the same uid, which an Edge
-// still sends for a v0.18.0 Core, the last Core that reads it.
+// station is the envelope's src.station.
 type LinesideLevelReport struct {
-	Station    string               `json:"station"`
 	ReportedAt time.Time            `json:"reported_at"`
 	Entries    []LinesideLevelEntry `json:"entries"`
 }

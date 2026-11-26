@@ -299,7 +299,7 @@ edge edge1.line1
   operator L1N-LOAD-B-OPS
   operator LINE-2H-OPS
   operator L2H-LOAD-OPS
-  core bin_types=10 payloads=33 zones=14 stations=102 bins=221 demands=17 kanbans=4 loader_settings=2
+  core bin_types=10 payloads=33 zones=14 stations=102 bins=235 demands=17 kanbans=4 loader_settings=2
 
 edge edge2.line1
   view station edge2.line1
@@ -335,4 +335,4 @@ edge edge2.line1
   operator SMN-10-OPS
   operator SMN-10X-OPS
   operator DRAIN-10-OPS
-  core bin_types=10 payloads=33 zones=14 stations=102 bins=221 demands=17 kanbans=4 loader_settings=2
+  core bin_types=10 payloads=33 zones=14 stations=102 bins=235 demands=17 kanbans=4 loader_settings=2

@@ -107,7 +107,7 @@ func TestProduceEmptyLine_SingleRobotRequestDeliversAnEmpty(t *testing.T) {
 
 // The empty a produce line's request brings names no load type, on the wire
 // or on its row: nothing on either module reads one, so its writers went and
-// the Edge's column is left dormant at its default.
+// Edge v60 dropped the column.
 func TestProduceEmptyLine_TheRetrieveNamesNoLoadType(t *testing.T) {
 	t.Parallel()
 	eng, db, nodeID, claim := seedCell(t, protocol.ClaimRoleProduce, protocol.SwapModeSingleRobot, false,
@@ -118,11 +118,6 @@ func TestProduceEmptyLine_TheRetrieveNamesNoLoadType(t *testing.T) {
 	_, plain := liveLineRows(t, eng, nodeID)
 	if len(plain) != 1 || plain[0].OrderType != orders.TypeRetrieve {
 		t.Fatalf("plain rows %+v, want the one retrieve", plain)
-	}
-	var loadType string
-	testutil.MustNoErr(t, db.QueryRow(`SELECT load_type FROM orders WHERE id = ?`, plain[0].ID).Scan(&loadType), "the row")
-	if loadType != "" {
-		t.Errorf("the row names load type %q, want none", loadType)
 	}
 	msgs, err := db.ListPendingOutbox(100)
 	testutil.MustNoErr(t, err, "outbox")

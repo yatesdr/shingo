@@ -70,22 +70,3 @@ func (s *CoreDataService) claimsFlags(station string) []string {
 	}
 	return out
 }
-
-// claimsFor is the heartbeat ack's Claims: process → digest for every report
-// row station (the heartbeat's sender) holds, and every mirrored process with
-// no report row at "" (plantclaims.ReportDigests). nil for an Edge that does
-// not speak feeds (it would not read them) and for one that quotes the owned
-// map (answered there, heldClaims, from the same read), and nil when the read
-// fails, so the Edge sends nothing on a read Core could not make; {} when Core
-// holds none.
-func (s *CoreDataService) claimsFor(station string, p *protocol.EdgeHeartbeat) map[string]string {
-	if p.Feeds == nil || p.Owned != nil {
-		return nil
-	}
-	claims, err := s.db.PlantClaimsReportDigests(station)
-	if err != nil {
-		log.Printf("core_feeds: plant claims for %s: %v — claims left off the ack", station, err)
-		return nil
-	}
-	return claims
-}

@@ -240,7 +240,8 @@ func holdRunningMoveBins(t *testing.T, eng *engine.Engine, leaving string, extra
 		// The ack quotes the copy's digest, as Core's does once it holds the
 		// same snapshot: that confirms the copy at the ack, whatever the clock's
 		// resolution (Actable).
-		eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{protocol.FeedBins: snap.Digest}, BinWatch: &listDigest})
+		eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{protocol.FeedBins: snap.Digest}, Owned: map[string]protocol.OwnedAnswer{
+			protocol.OwnedBinWatch: {Digest: "core-holds-the-list", Members: protocol.OwnedSingleton(listDigest, false)}}})
 		var ok bool
 		if ok, why = eng.BinsActable(); ok {
 			return

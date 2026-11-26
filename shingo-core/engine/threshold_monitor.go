@@ -478,23 +478,36 @@ func (m *ThresholdMonitor) startupSweep(ctx context.Context) {
 	m.eng.logFn("threshold_monitor: startup sweep complete — evaluating from authoritative DB reads")
 }
 
-// OnBinUOPDelta re-reads the payload's authoritative total and checks
-// thresholds. Called by HandleBinUOPDelta after the delta has been applied to
-// bins.uop_remaining. The delta value is retained for interface compatibility
-// with the messaging layer but no longer drives the math: the monitor re-reads
-// the authoritative sum (which already reflects the just-applied write) instead
-// of moving a private tally. Unmonitored/empty payloads short-circuit before
-// the read.
+// OnBinUOPDelta hands the payload's threshold check to the after-queue
+// (evaluateAfter). Called by HandleBinUOPDelta, on the inbound reader, after
+// the delta has been applied to bins.uop_remaining. The delta value is retained
+// for interface compatibility with the messaging layer but does not drive the
+// math: the check re-reads the authoritative sum instead of moving a private
+// tally.
 func (m *ThresholdMonitor) OnBinUOPDelta(payloadCode string, delta int) {
-	m.evaluatePayload(payloadCode, "below_threshold")
+	m.evaluateAfter(payloadCode)
 }
 
-// OnBucketApplied is invoked by the messaging layer after a lineside pile
-// level is applied: a level changes on-hand (an active pile counts), so it
-// re-reads the authoritative sum and checks thresholds, short-circuiting for
-// unmonitored or empty payloads.
+// OnBucketApplied is invoked by the messaging layer, on the inbound reader,
+// after a lineside pile level is applied: a level changes on-hand (an active
+// pile counts), so the payload's check is handed over the same way.
 func (m *ThresholdMonitor) OnBucketApplied(payloadCode string) {
-	m.evaluatePayload(payloadCode, "below_threshold")
+	m.evaluateAfter(payloadCode)
+}
+
+// evaluateAfter runs a count's check on the after-queue, as a bin update's runs
+// (wiring.go): the refill it can fire acquires under the scan lock, and the one
+// inbound reader must not wait for that lock
+// (TestCountHandlers_ReturnWhileTheScanLockIsHeld). The count committed before
+// the hand-over and the check reads the total when it runs, so it sees its own
+// count, and may see messages handled after it. Counts keep their order among
+// themselves (the queue is FIFO). An empty payload queues nothing; an
+// unmonitored one stops at the bindings lookup when its turn comes.
+func (m *ThresholdMonitor) evaluateAfter(payloadCode string) {
+	if payloadCode == "" || m.eng == nil || m.eng.db == nil {
+		return
+	}
+	m.eng.after.later(func() { m.evaluatePayload(payloadCode, "below_threshold") })
 }
 
 // handleBinUpdated is the EventBinUpdated subscriber for non-delta bin

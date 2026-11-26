@@ -136,8 +136,8 @@ var feedRows = [...]feedRow{
 	{key: protocol.FeedNodes, quote: quoteHeld, keepRow: true},
 	{key: protocol.FeedScene, quote: quoteScene, keepRow: true},
 	{key: protocol.FeedCatalog, quote: quoteHeld, persistDigest: true, keepRow: true, aged: agedOnBoard},
-	// Always quoted, "" while nothing is held: Core drops an Edge's watch
-	// list when its heartbeat does not name the key (a build without the feed).
+	// Always quoted, "" while nothing is held, so Core answers the feed on
+	// every beat.
 	{key: protocol.FeedBins, quote: quoteHeld, aged: agedOnBoard},
 	// Quoted from the cache itself (quoteSourcing), so its digest needs no
 	// persisting and a delta that never arrived shows as a different digest.
@@ -265,24 +265,19 @@ func (b *feedBook) clock() time.Time {
 // reads its own. The same digest inside the guard is in flight and is held
 // back, unless Core held it and now quotes otherwise (a restarted Core): then
 // it goes at once. A third send in a row raises a flag. quoted is the digest
-// Core holds for the key: when it is the one sent last, that send converged
-// and the streak starts over: a key whose value moves on every heartbeat is
-// not stuck.
+// Core holds for the key: when it is any copy sent since the last one Core
+// proved (resend.Record.Quoted, Core's rule) the streak starts over and the
+// flag clears, because Core's answer is as old as its ack and a key whose
+// value moves on every heartbeat is not stuck. A Core frozen at one digest is
+// believed once. Pinned by TestSendDue_AQuoteOfAnOlderSendConverges and
+// TestSendDue_AFrozenQuoteStillFlags.
 func (e *Engine) sendDue(key, digest, quoted string) bool {
 	now := e.feeds.clock()
 	e.feeds.mu.Lock()
 	defer e.feeds.mu.Unlock()
-	if e.feeds.sent == nil {
-		e.feeds.sent = map[string]*resend.Record{}
-	}
-	rec := e.feeds.sent[key]
-	if rec != nil && rec.IsLast(quoted) {
-		rec.Converged()
+	rec := e.feeds.sentLocked(key)
+	if rec.Quoted(quoted) {
 		delete(e.feeds.flags, key)
-	}
-	if rec == nil {
-		rec = &resend.Record{}
-		e.feeds.sent[key] = rec
 	}
 	if !rec.Send(digest, quoted, now) {
 		return false
@@ -299,6 +294,16 @@ func (e *Engine) sendDue(key, digest, quoted string) bool {
 	return true
 }
 
+// recordPush records a send of an Edge-owned key made outside sendDue (the
+// claims publisher's publish on a save), as Core records its own: a quote of
+// it converges, and the resend guard and the streak are left alone.
+func (e *Engine) recordPush(key, digest string) {
+	now := e.feeds.clock()
+	e.feeds.mu.Lock()
+	defer e.feeds.mu.Unlock()
+	e.feeds.sentLocked(key).Pushed(digest, now)
+}
+
 // converged records that Core quoted an Edge-owned key back with the digest
 // this Edge holds: the streak ends and any flag on it clears.
 func (e *Engine) converged(key string) {
@@ -312,19 +317,23 @@ func (e *Engine) converged(key string) {
 
 // heldByCore records that Core holds digest for an Edge-owned key, learned
 // from something other than an ack's quote: the bins snapshot names the watch
-// list it answers. When it is the digest last sent, that send converged, as if
-// an ack had quoted it, so a Core that restarts before its next ack is healed
-// on its first one (resend.Record: a held send quoted otherwise was lost).
+// list it answers. It is a quote like an ack's: any copy sent since the last
+// one proved ends the streak, and when it is the last send, a Core that
+// restarts before its next ack is healed on its first one (resend.Record: a
+// held send quoted otherwise was lost). Pinned by
+// TestHeldByCore_AnOlderSendEndsTheStreak and
+// TestSendDue_ARestartedCoreIsHealedAtOnce.
 func (e *Engine) heldByCore(key, digest string) {
 	e.feeds.mu.Lock()
 	defer e.feeds.mu.Unlock()
-	if rec := e.feeds.sent[key]; rec != nil && rec.IsLast(digest) {
-		rec.Converged()
+	if rec := e.feeds.sent[key]; rec != nil && rec.Quoted(digest) {
 		delete(e.feeds.flags, key)
 	}
 }
 
-// FeedFlags lists the Edge-owned keys flagged as not converging, for /status.
+// FeedFlags is the Edge's flag list, for /status and Diagnostics: the
+// Edge-owned keys flagged as not converging, then the start's schema drift
+// (store.DriftAtBoot), which stands until a start finds none.
 func (e *Engine) FeedFlags() []string {
 	e.feeds.mu.Lock()
 	defer e.feeds.mu.Unlock()
@@ -333,7 +342,7 @@ func (e *Engine) FeedFlags() []string {
 		out = append(out, text)
 	}
 	sort.Strings(out)
-	return out
+	return append(out, e.db.DriftAtBoot()...)
 }
 
 // LastCoreAck returns the local time of the last heartbeat ack and Core's
@@ -364,6 +373,19 @@ func persistedRow(key string, h *feedHold) store.FeedCopy {
 		row.Digest, row.Body = h.digest, h.body
 	}
 	return row
+}
+
+// sentLocked is the send record of one Edge-owned key, made when there is none.
+func (b *feedBook) sentLocked(key string) *resend.Record {
+	if b.sent == nil {
+		b.sent = map[string]*resend.Record{}
+	}
+	rec := b.sent[key]
+	if rec == nil {
+		rec = &resend.Record{}
+		b.sent[key] = rec
+	}
+	return rec
 }
 
 func (b *feedBook) holdLocked(key string) *feedHold {

@@ -1,132 +1,23 @@
-// Package schema holds shingo-edge's SQLite baseline DDL and
-// pragma_table_info / sqlite_master introspection helpers.
+// Package schema holds the Edge's schema: the generated baseline a new file is
+// born on (baseline.sql), the generated snapshot of a born database
+// (schema.snapshot.sql), and the reader of a schema's shape (shape.go).
 //
-// Phase 6.0b of the architecture refactor cut this seam out of the
-// 1013-line store/schema.go, which previously bundled the canonical
-// CREATE TABLE constant, the cleanup-DROP constant, the migrate()
-// entry point, ~17 versioned per-column rebuilds, and the
-// introspection methods all in a single file. After 6.0b the split
-// is:
-//
-//	store/schema/sqlite_ddl.go — sqliteDDL constant (canonical state)
-//	store/schema/schema.go     — Apply / TableExists / TableHasColumn
-//	store/migrations.go        — migrate(), legacy-rename and per-table
-//	                             rebuild helpers
+// The baseline is the one home of the shape, and a numbered migration above
+// it (store/migrations.go) the one way to change it.
 //
 // All helpers take *sql.DB so they're usable without the outer
 // *store.DB type, keeping the dependency graph one-way:
 // store -> store/schema, never the reverse.
-//
-// SQLite quirk to remember: `CREATE TABLE IF NOT EXISTS` and
-// `CREATE INDEX IF NOT EXISTS` are both idempotent, so Apply is
-// safe to run on a fresh DB, an in-flight DB, or a fully-migrated
-// DB. Versioned column-level migrations (renames, rebuilds, ALTER
-// ADD COLUMN) live in store/migrations.go and run *after* Apply.
 package schema
 
-import (
-	"database/sql"
-	"fmt"
-)
-
-// Apply executes the canonical schema DDL, creating every table and
-// index idempotently. Apply does NOT run the legacy-table cleanup
-// DROPs or the per-version column rebuilds — those live in the
-// migrate() entry point in store/migrations.go and must be ordered
-// around the Apply call (drops + renames before, ALTERs + fixups
-// after) to preserve data on databases of any age.
-func Apply(db *sql.DB) error {
-	if _, err := db.Exec(sqliteDDL); err != nil {
-		return fmt.Errorf("schema apply: %w", err)
-	}
-	return nil
-}
-
-// TableHasColumn reports whether the named column exists on the named
-// table. Returns (false, nil) for missing tables; the caller treats a
-// missing table as "no, this column doesn't exist", which matches
-// every existing call-site after the migrations.go extraction.
-func TableHasColumn(db *sql.DB, tableName, columnName string) (bool, error) {
-	rows, err := db.Query(`SELECT name FROM pragma_table_info('`+tableName+`') WHERE name = ?`, columnName)
-	if err != nil {
-		return false, err
-	}
-	defer rows.Close()
-	return rows.Next(), rows.Err()
-}
-
-// TableExists reports whether the named table is present in
-// sqlite_master. Returns (false, nil) for unknown table names rather
-// than an error, mirroring the pre-6.0b method behavior on *DB.
-func TableExists(db *sql.DB, tableName string) (bool, error) {
-	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, tableName)
-	if err != nil {
-		return false, err
-	}
-	defer rows.Close()
-	return rows.Next(), rows.Err()
-}
-
-// ColumnDefault returns the named column's DEFAULT expression and whether it
-// has one at all.
-//
-// SQLite has no ALTER COLUMN DROP DEFAULT, so a default can only be changed by
-// rebuilding the table — which makes the default itself the predicate a rebuild
-// migration branches on to stay idempotent. It returns the VALUE, not just
-// presence, because "has a default" is usually the wrong question: a column can
-// converge on a different default rather than on none, and a presence check
-// would then rebuild the table on every startup forever.
-//
-// Returns ("", false, nil) for a missing table or column.
-func ColumnDefault(db *sql.DB, tableName, columnName string) (string, bool, error) {
-	rows, err := db.Query(`SELECT dflt_value FROM pragma_table_info('`+tableName+`') WHERE name = ?`, columnName)
-	if err != nil {
-		return "", false, err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		return "", false, rows.Err()
-	}
-	var dflt sql.NullString
-	if err := rows.Scan(&dflt); err != nil {
-		return "", false, err
-	}
-	return dflt.String, dflt.Valid, rows.Err()
-}
-
-// ColumnType returns the named column's DECLARED type ("TEXT", "INTEGER", ...),
-// and whether the column exists at all.
-//
-// The declared type, not the storage class of whatever happens to be in there.
-// SQLite is dynamically typed, so a column declared INTEGER accepts the string
-// "SNF2" and stores it as text — which means a wrong declaration does not
-// error, it just makes the schema a document that disagrees with the data. This
-// is how a rebuild migration detects that case, since CREATE TABLE IF NOT
-// EXISTS cannot correct a column type on a table that already exists.
-//
-// Returns ("", false, nil) for a missing table or column.
-func ColumnType(db *sql.DB, tableName, columnName string) (string, bool, error) {
-	rows, err := db.Query(`SELECT type FROM pragma_table_info('`+tableName+`') WHERE name = ?`, columnName)
-	if err != nil {
-		return "", false, err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		return "", false, rows.Err()
-	}
-	var t string
-	if err := rows.Scan(&t); err != nil {
-		return "", false, err
-	}
-	return t, true, rows.Err()
-}
+import "database/sql"
 
 // Column is one column of a table as pragma_table_info reports it: the name and
 // the DECLARED type, in ordinal order.
 type Column struct{ Name, Type string }
 
 // Columns returns every column of the named table, in ordinal order. Empty for
-// a table that does not exist, matching TableExists / TableHasColumn's habit of
+// a table that does not exist,
 // answering "no such thing" rather than erroring.
 //
 // It exists so one table can be kept a MIRROR of another without either column

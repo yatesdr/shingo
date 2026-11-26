@@ -2,13 +2,16 @@ package fulfillment
 
 import (
 	"errors"
+	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingocore/config"
 	"shingocore/dispatch"
 	"shingocore/dispatch/binresolver"
 	"shingocore/dispatch/plan"
@@ -675,15 +678,18 @@ func TestScannerCapacityGatePassesOrderID(t *testing.T) {
 
 // ── RunOnce coalescing + periodic sweep ─────────────────────────────
 
-func TestScanner_RunOnce_TriggerDuringScan_RerunsOnce(t *testing.T) {
+// TestScanner_TriggerDuringAScan_IsOneMorePassByTheWorker: RunOnce is one scan,
+// whatever triggers during it; the triggers wait in the one slot, and the
+// worker makes one more pass of them.
+func TestScanner_TriggerDuringAScan_IsOneMorePassByTheWorker(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()
 	s := newTestScanner(t, f)
 
-	var calls int
+	var scans atomic.Int32
 	f.onListQueuedOrders = func() {
-		calls++
-		if calls == 1 {
+		if scans.Add(1) == 1 {
+			s.Trigger()
 			s.Trigger()
 		}
 	}
@@ -691,9 +697,77 @@ func TestScanner_RunOnce_TriggerDuringScan_RerunsOnce(t *testing.T) {
 	if got := s.RunOnce(); got != 0 {
 		t.Fatalf("RunOnce fulfilled unexpectedly: got %d, want 0", got)
 	}
-	if calls != 2 {
-		t.Errorf("RunOnce should coalesce into exactly 2 scans, got %d", calls)
+	if n := scans.Load(); n != 1 {
+		t.Fatalf("RunOnce made %d scans, want 1: a trigger during it is the next pass", n)
 	}
+	s.StartPeriodicSweep(time.Hour)
+	t.Cleanup(s.Stop)
+	testutil.Eventually(t, 2*time.Second, func() bool { return scans.Load() >= 2 })
+	time.Sleep(20 * time.Millisecond) // negative assertion: no pass after that one
+	if n := scans.Load(); n != 2 {
+		t.Errorf("two triggers during a scan made %d scans in all, want 2", n)
+	}
+}
+
+// TestScanner_ATriggerAfterTheLastScanBeganIsNeverLost: Trigger asks for a
+// pass, and one always starts after it, on a started scanner, with nobody
+// calling RunOnce for it. RED at 6bd55616: a trigger only set a flag, which a
+// pass read once, before its last scan, and which an idle scanner never read.
+func TestScanner_ATriggerAfterTheLastScanBeganIsNeverLost(t *testing.T) {
+	t.Parallel()
+	t.Run("idle", func(t *testing.T) {
+		t.Parallel()
+		f := newFakeStore()
+		var scans atomic.Int32
+		f.onListQueuedOrders = func() { scans.Add(1) }
+		s := newTestScanner(t, f)
+		s.StartPeriodicSweep(time.Hour)
+		t.Cleanup(s.Stop)
+
+		s.Trigger()
+		for deadline := time.Now().Add(2 * time.Second); scans.Load() == 0 && time.Now().Before(deadline); {
+			time.Sleep(time.Millisecond)
+		}
+		if scans.Load() == 0 {
+			t.Fatal("a trigger on an idle scanner ran no scan in 2 s: it waits for the 60 s sweep")
+		}
+	})
+	t.Run("during the last scan", func(t *testing.T) {
+		t.Parallel()
+		f := newFakeStore()
+		var scans atomic.Int32
+		first, second, goOn, last := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
+		f.onListQueuedOrders = func() {
+			switch scans.Add(1) {
+			case 1:
+				close(first)
+				<-goOn
+			case 2:
+				close(second)
+				<-last
+			}
+		}
+		s := newTestScanner(t, f)
+		s.StartPeriodicSweep(time.Hour)
+		t.Cleanup(s.Stop)
+		go s.RunOnce()
+		<-first
+		s.Trigger() // asks for the second scan, the last one asked for so far
+		close(goOn)
+		select {
+		case <-second:
+		case <-time.After(5 * time.Second):
+			t.Fatal("a trigger during a scan ran no second scan in 5 s")
+		}
+		s.Trigger() // after the last scan began
+		close(last)
+		for deadline := time.Now().Add(2 * time.Second); scans.Load() < 3 && time.Now().Before(deadline); {
+			time.Sleep(time.Millisecond)
+		}
+		if n := scans.Load(); n < 3 {
+			t.Fatalf("a trigger after the last scan began was lost: %d scans, and none started after it in 2 s", n)
+		}
+	})
 }
 
 func TestScanner_StartPeriodicSweep_StopHaltsLoop(t *testing.T) {
@@ -758,29 +832,27 @@ func TestHeldBin_DeclaresItselfAsHeldBinEntry(t *testing.T) {
 	}
 }
 
-// triggeringFinder waits like waitFinder, and on its first call triggers the
-// scanner the way an event in mid-pass does (engine.triggerFulfillment), so the
-// pass reruns.
+// triggeringFinder waits like waitFinder, counts what it is asked, and on its
+// first call triggers the scanner the way an event in mid-pass does
+// (engine.triggerFulfillment).
 type triggeringFinder struct {
 	fakeFinder
-	s *Scanner
+	s     *Scanner
+	asked atomic.Int32
 }
 
 func (f *triggeringFinder) FindSource(order *orders.Order, intent dispatch.Intent) dispatch.SourceResult {
-	if len(f.calls) == 0 {
+	if f.asked.Add(1) == 1 {
 		f.s.Trigger()
 	}
 	return f.fakeFinder.FindSource(order, intent)
 }
 
-// TestScanner_AnOrderParkedThisPassIsNotReAskedInItsRerun: a pass that was
-// triggered while it scanned scans once more (RunOnce's rerun). An order it has
-// just asked and parked under a cause was asked again there, and paid its whole
-// acquisition again, for a state that had not moved for it (the order-22 shape:
-// 43 re-parks in 3 s under one cause). Every trigger also starts a fresh pass of
-// its own (engine.triggerFulfillment), so nothing waits on the rerun to see it
-// again.
-func TestScanner_AnOrderParkedThisPassIsNotReAskedInItsRerun(t *testing.T) {
+// TestScanner_AnOrderIsAskedOncePerPassAndAgainByTheTriggeredOne: an order a
+// pass asked and parked is not asked again in that pass, whatever triggered
+// during it (the order-22 shape: 43 re-parks in 3 s under one cause), and the
+// pass that trigger asked for asks it once more, against what moved.
+func TestScanner_AnOrderIsAskedOncePerPassAndAgainByTheTriggeredOne(t *testing.T) {
 	t.Parallel()
 	f := newFakeStore()
 	order := seedQueuedRetrieve(f, 7, "dest-07")
@@ -789,15 +861,15 @@ func TestScanner_AnOrderParkedThisPassIsNotReAskedInItsRerun(t *testing.T) {
 	s.finder = finder
 
 	s.RunOnce()
-	asked := 0
-	for _, c := range finder.calls {
-		if c.orderID == order.ID {
-			asked++
-		}
+	if n := finder.asked.Load(); n != 1 {
+		t.Fatalf("order %d was asked %d times in one pass, want 1", order.ID, n)
 	}
-	if asked != 1 {
-		t.Fatalf("order %d was asked %d times in one pass, want 1: the rerun re-asked an order this pass had "+
-			"just parked", order.ID, asked)
+	s.StartPeriodicSweep(time.Hour)
+	t.Cleanup(s.Stop)
+	testutil.Eventually(t, 2*time.Second, func() bool { return finder.asked.Load() >= 2 })
+	time.Sleep(20 * time.Millisecond) // negative assertion: once, in that pass
+	if n := finder.asked.Load(); n != 2 {
+		t.Errorf("order %d was asked %d times over the pass and the one it triggered, want 2", order.ID, n)
 	}
 }
 
@@ -808,4 +880,248 @@ func (d *recordingDispatcher) ChooseWindowPush(*orders.Order, *nodes.Node, plan.
 }
 func (d *recordingDispatcher) ReserveChosenPush(o *orders.Order, _ *nodes.Node) dispatch.StorageDropoff {
 	return d.ReserveStorageDropoff(o)
+}
+
+// pairActDispatcher's one dispatch call is the whole act of a pair: two writes,
+// with a wait between them that the test holds open.
+type pairActDispatcher struct {
+	*stubDispatcher
+	calls, writes atomic.Int32
+	betweenLegs   chan struct{}
+	goOn          chan struct{}
+}
+
+func (d *pairActDispatcher) DispatchPreparedComplex(*orders.Order) error {
+	first := d.calls.Add(1) == 1
+	d.writes.Add(1)
+	if first {
+		close(d.betweenLegs)
+		<-d.goOn
+	}
+	d.writes.Add(1)
+	return nil
+}
+
+// TestScanner_StopEndsAPassBetweenOrdersNeverBetweenAPairsLegs: Stop during a
+// pass lets the order in hand finish whole (both legs of a pair are the act of
+// one order: the pair leader dispatches them in one call), waits for it, and
+// asks no order after it. RED at 6bd55616: Stop returned at once and the pass
+// asked every order left.
+func TestScanner_StopEndsAPassBetweenOrdersNeverBetweenAPairsLegs(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	for id := int64(1); id <= 3; id++ {
+		o := seedQueuedRetrieve(f, id, "dest-stop")
+		o.OrderType, o.Coordinated = protocol.OrderTypeComplex, true
+		o.StepsJSON = `[{"action":"pickup","node":"SRC"},{"action":"dropoff","node":"dest-stop"}]`
+	}
+	d := &pairActDispatcher{stubDispatcher: &stubDispatcher{}, betweenLegs: make(chan struct{}), goOn: make(chan struct{})}
+	s := newTestScannerWithDispatcher(t, f, d)
+	s.logFn = func(string, ...any) {}
+	s.StartPeriodicSweep(10 * time.Millisecond)
+	select {
+	case <-d.betweenLegs:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no pass reached the first order in 5 s")
+	}
+
+	stopped := make(chan struct{})
+	go func() { s.Stop(); close(stopped) }()
+	select {
+	case <-stopped:
+		t.Error("Stop returned between the legs of the pair in hand")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(d.goOn)
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop did not return after the order in hand finished")
+	}
+	time.Sleep(50 * time.Millisecond) // negative assertion: nothing more is asked
+	if c, w := d.calls.Load(), d.writes.Load(); c != 1 || w != 2 {
+		t.Errorf("after Stop the pass had asked %d order(s) with %d leg writes, want the one in hand with both its legs (1, 2)", c, w)
+	}
+}
+
+// TestScanner_StopOfANeverStartedScannerReturnsAtOnce: with no worker there is
+// nothing to join, and Stop does not wait for the scan lock, whoever holds it.
+func TestScanner_StopOfANeverStartedScannerReturnsAtOnce(t *testing.T) {
+	t.Parallel()
+	s := newTestScanner(t, newFakeStore())
+	held, letGo := make(chan struct{}), make(chan struct{})
+	defer close(letGo)
+	go s.Door(func() { close(held); <-letGo })
+	<-held
+	stopped := make(chan struct{})
+	go func() { s.Stop(); close(stopped) }()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("Stop of a never-started scanner waited a second")
+	}
+}
+
+// TestScanner_StopGivesUpAtItsBound: a pass hung in a call, or a worker behind
+// a holder of the scan lock that never lets go, cannot hang shutdown: Stop
+// returns at the bound with one line, and a worker that gets the lock after
+// that starts no pass. The bound is just past the fleet client's default
+// timeout, so one fleet call in hand can finish.
+func TestScanner_StopGivesUpAtItsBound(t *testing.T) {
+	t.Parallel()
+	if d, rds := StopJoinLimit, config.Defaults().RDS.Timeout; d <= rds || d > rds+5*time.Second {
+		t.Errorf("StopJoinLimit = %v, want just past the fleet client's default timeout %v", d, rds)
+	}
+	for _, hungPass := range []bool{true, false} {
+		name := "a holder of the scan lock never lets go"
+		if hungPass {
+			name = "the pass is hung in a call"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newFakeStore()
+			s := newTestScanner(t, f)
+			s.stopWait = 100 * time.Millisecond
+			var lines atomic.Int32
+			s.logFn = func(format string, _ ...any) {
+				if strings.Contains(format, "stop gave up") {
+					lines.Add(1)
+				}
+			}
+			in, out := make(chan struct{}), make(chan struct{})
+			var once, outOnce sync.Once
+			letGo := func() { outOnce.Do(func() { close(out) }) }
+			t.Cleanup(letGo)
+			var scans atomic.Int32
+			hold := func() { once.Do(func() { close(in) }); <-out }
+			f.onListQueuedOrders = func() {
+				scans.Add(1)
+				if hungPass {
+					hold()
+				}
+			}
+			if !hungPass {
+				go s.Door(hold)
+				<-in
+			}
+			s.StartPeriodicSweep(time.Hour)
+			s.Trigger()
+			if hungPass {
+				<-in
+			} else {
+				testutil.Eventually(t, 2*time.Second, func() bool { return len(s.wake) == 0 })
+			}
+
+			began := time.Now()
+			s.Stop()
+			if d := time.Since(began); d > 2*time.Second {
+				t.Errorf("Stop took %v with a bound of 100 ms", d)
+			}
+			if n := lines.Load(); n != 1 {
+				t.Errorf("Stop said it gave up %d times, want one line", n)
+			}
+			at := scans.Load()
+			letGo()
+			<-s.workerDone
+			if n := scans.Load(); n != at {
+				t.Errorf("%d pass(es) started after Stop gave up", n-at)
+			}
+		})
+	}
+}
+
+// markedScanner is a scanner whose timer interval is a minute and whose worker
+// is the test: it takes the wake, and runs workerPass, when the test says.
+func markedScanner(t *testing.T, f *fakeStore) *Scanner {
+	t.Helper()
+	s := newTestScanner(t, f)
+	s.interval.Store(int64(time.Minute))
+	return s
+}
+
+// TestScanner_AWorkerWedgedOutsideTheLockReadsStopped: a worker that took the
+// wake and went no further, with the scan lock turning over, reads as stopped
+// once a trigger has gone unanswered for the interval, and never as running
+// long.
+func TestScanner_AWorkerWedgedOutsideTheLockReadsStopped(t *testing.T) {
+	t.Parallel()
+	s := markedScanner(t, newFakeStore())
+	s.Trigger()
+	<-s.wake // the worker took it, and is wedged before the lock
+	s.Door(func() {})
+	now := time.Now()
+	if d := s.WorkerStopped(now.Add(59 * time.Second)); d != 0 {
+		t.Errorf("stopped after 59 s (%v), inside the interval", d)
+	}
+	if d := s.WorkerStopped(now.Add(61 * time.Second)); d < time.Minute {
+		t.Errorf("stopped for %v at 61 s, want over a minute", d)
+	}
+	if d := s.RunningLong(now.Add(time.Hour)); d != 0 {
+		t.Errorf("a wedged worker read as a pass running long (%v)", d)
+	}
+}
+
+// TestScanner_AGoexitInsideAPassReadsStoppedNotRunningLong: the running mark
+// clears by defer, whatever ends the pass.
+func TestScanner_AGoexitInsideAPassReadsStoppedNotRunningLong(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	s := markedScanner(t, f)
+	f.onListQueuedOrders = func() {
+		s.Trigger() // waiting behind the pass
+		runtime.Goexit()
+	}
+	died := make(chan struct{})
+	go func() {
+		defer close(died)
+		s.workerPass()
+	}()
+	<-died
+	later := time.Now().Add(61 * time.Second)
+	if d := s.RunningLong(later); d != 0 {
+		t.Errorf("a pass that ended in Goexit still reads as running long (%v)", d)
+	}
+	if d := s.WorkerStopped(later); d == 0 {
+		t.Error("a worker dead of a Goexit inside its pass does not read as stopped")
+	}
+}
+
+// TestScanner_AWorkerBusyIsNotStopped: waiting for the scan lock is neither
+// sentence, a pass running is only the long one, and a trigger that waited
+// behind a long pass starts waiting when the pass ends.
+func TestScanner_AWorkerBusyIsNotStopped(t *testing.T) {
+	t.Parallel()
+	f := newFakeStore()
+	s := markedScanner(t, f)
+	inPass, endPass := make(chan struct{}), make(chan struct{})
+	f.onListQueuedOrders = func() { close(inPass); <-endPass }
+	held, letGo := make(chan struct{}), make(chan struct{})
+	go s.Door(func() { close(held); <-letGo })
+	<-held
+
+	s.Trigger()
+	<-s.wake
+	done := make(chan struct{})
+	go func() { defer close(done); s.workerPass() }()
+	testutil.Eventually(t, 2*time.Second, s.lockWait.Load)
+	later := time.Now().Add(time.Hour)
+	if a, b := s.WorkerStopped(later), s.RunningLong(later); a != 0 || b != 0 {
+		t.Errorf("waiting for the lock read stopped %v, long %v; want neither", a, b)
+	}
+
+	close(letGo)
+	<-inPass
+	s.Trigger()
+	later = time.Now().Add(time.Hour)
+	if a, b := s.WorkerStopped(later), s.RunningLong(later); a != 0 || b == 0 {
+		t.Errorf("a long pass read stopped %v, long %v; want only long", a, b)
+	}
+
+	// The trigger behind the pass is made old: the pass ran for an hour.
+	s.askedAt.Store(s.mono(time.Now().Add(-time.Hour)))
+	close(endPass)
+	<-done
+	if d := s.WorkerStopped(time.Now()); d != 0 {
+		t.Errorf("the wait behind a long pass counted as stopped (%v)", d)
+	}
 }

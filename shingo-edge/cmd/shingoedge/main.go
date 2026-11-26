@@ -84,7 +84,7 @@ func parseFlags() edgeFlags {
 	restoreMode := flag.Bool("restore", false, "interactive restore from backup storage before starting")
 	pprofPort := flag.Int("pprof-port", 0, "serve net/http/pprof on 127.0.0.1 at this port (0 = off)")
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: shingoedge [flags]\n\nFlags:\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: shingoedge [flags]\n       shingoedge migrate [-config PATH] check\n\nFlags:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(flag.CommandLine.Output(), "  --log-debug[=FILTER]\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "        Enable debug log file. FILTER is optional comma-separated subsystems:\n")
@@ -484,6 +484,11 @@ func awaitShutdown(srv *http.Server, stopWeb func()) {
 }
 
 func main() {
+	// Before flags, the restore check and the debug log: migrate check writes
+	// nothing.
+	if len(os.Args) > 1 && os.Args[1] == "migrate" {
+		os.Exit(runMigrate(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			stack := debug.Stack()
@@ -1187,7 +1192,7 @@ func buildInboundRouter(eng *engine.Engine, edgeHandler *messaging.EdgeHandler, 
 	subjectRouter := router.NewSubject()
 
 	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeRegistered, func(_ *protocol.Envelope, reg *protocol.EdgeRegistered) {
-		log.Printf("edge_handler: registration acknowledged: station=%s msg=%s", reg.StationID, reg.Message)
+		log.Printf("edge_handler: registration acknowledged: station=%s msg=%s", eng.StationID(), reg.Message)
 		// Core's verified ephemeral topic, or none: the live robot feed's
 		// link opens and closes on what each registration and ack say.
 		eng.OfferEphemeralTopic(reg.EphemeralTopic)
@@ -1231,7 +1236,7 @@ func buildInboundRouter(eng *engine.Engine, edgeHandler *messaging.EdgeHandler, 
 		goSafe("engine-SweepPushLoaders", func() { eng.SweepPushLoaders() })
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeHeartbeatAck, func(_ *protocol.Envelope, ack *protocol.EdgeHeartbeatAck) {
-		log.Printf("edge_handler: heartbeat ack: station=%s server_ts=%s", ack.StationID, ack.ServerTS)
+		log.Printf("edge_handler: heartbeat ack: station=%s server_ts=%s", eng.StationID(), ack.ServerTS)
 		adoptPlantTimezone(eng.AppConfig(), eng.ConfigPath(), ack.Timezone)
 		eng.OnCoreAck(ack)
 	})

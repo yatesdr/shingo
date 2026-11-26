@@ -423,12 +423,12 @@ func TestConsumeDowngrade_MintsOncePlacementIsRecorded(t *testing.T) {
 
 	// The step-7 record, through the real handler: Core moved the fresh carrier
 	// onto the cell and says so.
-	eng.HandleUOPAdjustment(protocol.UOPAdjustment{
+	eng.HandleBinLanded(protocol.BinLanded{
 		BinID:        placedBinID,
 		CoreNodeName: "ALN_004",
-		NewRemaining: 40,
+		Count:        40,
 		Epoch:        1,
-		Bound:        true,
+		PlacedSeq:    testPlacedSeq.Add(1),
 	})
 
 	after, err := db.GetOrder(leg.ID)

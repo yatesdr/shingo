@@ -73,14 +73,11 @@ type CellCatalog struct {
 // station + "." + line into 'plant-a.line-1.line-1', a dashboard scope no row
 // from ListOrderStations() can match. A field that carries one constant into
 // one wrong answer is not vestigial, it is a defect with a schema.
+//
+// The station is not in the body: it is the envelope's Address.Station, the
+// uid the edge mints at first start and keeps in its config. Core introduces
+// a uid it has never seen as an unclaimed station.
 type EdgeRegister struct {
-	// StationID is the station UID, which the edge mints at first start and
-	// keeps in its config. A station from before station UIDs carries its old
-	// station string as its uid. Core resolves the station by the envelope's
-	// Address.Station, which carries the same uid, and introduces a uid it has
-	// never seen as an unclaimed station; it does not read this copy, which the
-	// Edge still sends for a Core older than that.
-	StationID string `json:"station_id"`
 	// Hostname is the OS hostname: attribute data and a weak duplicate signal,
 	// since two Pis flashed from one SD image share it.
 	Hostname string `json:"hostname"`
@@ -115,12 +112,9 @@ type EdgeRegister struct {
 	Catalog       []CellCatalogEntry `json:"catalog,omitempty"`
 }
 
-// EdgeHeartbeat is sent periodically by an edge.
+// EdgeHeartbeat is sent periodically by an edge. The station is the envelope's
+// Address.Station.
 type EdgeHeartbeat struct {
-	// StationID is the heartbeating station's UID, as registered. Core reads
-	// the envelope's Address.Station instead; the Edge still sends this copy
-	// for a Core older than that.
-	StationID string `json:"station_id"`
 	// Timezone mirrors EdgeRegister.Timezone on every heartbeat. Edge reads
 	// it once at boot (not live), so the wire value flips only when a
 	// process that actually renders the new zone comes up — Core's table
@@ -147,19 +141,19 @@ type EdgeHeartbeat struct {
 	// family on the ack (EdgeHeartbeatAck.Owned) and the Edge sends the members
 	// that differ.
 	//
-	// Absence, three ways. nil (the key's value null; NOT omitempty, so a new
-	// Edge always sends at least {}) is an Edge that does not speak the owned
-	// map: the old fields serve it, and Core answers EdgeHeartbeatAck.Claims
-	// and .BinWatch and no Owned. A family left off is one this Edge could not
-	// read: Core answers nothing for it and nothing is sent for it. A family
-	// that holds none is present at OwnedDigest of no members, a real digest,
-	// never "".
+	// Absence, three ways. nil (the key's value null; NOT omitempty, so an
+	// Edge always sends at least {}) quotes no map, and Core answers no Owned.
+	// A family left off is one this Edge could not read: Core answers nothing
+	// for it and nothing is sent for it. A family that holds none is present at
+	// OwnedDigest of no members, a real digest, never "".
 	Owned map[string]string `json:"owned"`
 }
 
 // EdgeRegistered acknowledges edge registration.
 type EdgeRegistered struct {
-	// StationID echoes the registered station's UID.
+	// StationID echoes the registered station's UID, for a v0.19.0 Edge, the
+	// floor, which logs it. This Edge logs its own and does not read it: the
+	// key goes when FloorEdge is the release that stopped reading it.
 	StationID string `json:"station_id"`
 	// Message is a human-readable status message.
 	Message string `json:"message,omitempty"`
@@ -171,7 +165,8 @@ type EdgeRegistered struct {
 
 // EdgeHeartbeatAck acknowledges a heartbeat.
 type EdgeHeartbeatAck struct {
-	// StationID echoes the heartbeating station's UID.
+	// StationID echoes the heartbeating station's UID, kept for a v0.19.0
+	// Edge's log line as EdgeRegistered.StationID is.
 	StationID string `json:"station_id"`
 	// ServerTS is Core's clock when it answered. The edge compares it with its
 	// own and shows the offset on /status; the offset includes Core's outbox
@@ -219,37 +214,16 @@ type EdgeHeartbeatAck struct {
 	// Core lacks, sends empty each member Core holds that it lacks, and
 	// confirms the rest.
 	//
-	// Absence, three ways, as on the heartbeat. nil (null; NOT omitempty) is a
-	// Core that does not speak the owned map, or a heartbeat that sent none:
-	// the old fields serve, so the Edge reads Claims and BinWatch as before and
-	// sends no SubjectEdgeCells. A family left off is one Core could not read
-	// (or does not serve): the Edge sends nothing for it and confirms nothing.
-	// A family whose answer holds no members is Core holding none.
+	// Absence, three ways, as on the heartbeat. nil (null; NOT omitempty) is no
+	// answer: the Edge sends nothing and settles nothing. A family left off is
+	// one Core could not read (or does not serve): the Edge sends nothing for
+	// it and confirms nothing. A family whose answer holds no members is Core
+	// holding none.
 	Owned map[string]OwnedAnswer `json:"owned"`
-	// Claims is, for every process Core holds a plant-claims report for from
-	// this station, the digest that arrived with that process's last report.
-	// The Edge re-publishes a process whose digest differs or is missing, and
-	// publishes an empty report for a name it no longer has. nil means Core
-	// could not read them (or is older); {} means it holds none.
-	//
-	// The old field for OwnedClaims: Core fills it only for a heartbeat with no
-	// Owned (TestHeartbeatAck_TheOwnedMapPerFamily), and the Edge reads it only
-	// from an ack with no Owned.
-	Claims map[string]string `json:"claims"`
-	// BinWatch is the digest of the bins watch list Core holds for this Edge,
-	// as it arrived on SubjectBinsWatch; "" when Core holds none. The Edge
-	// publishes its list when this differs from its own.
-	//
-	// A POINTER, AND ABSENT IS AN ANSWER: nil (the key left out) is a Core
-	// without the bins feed, and the Edge then reads bins as it did before and
-	// publishes nothing. An Edge that sends no Feeds is not answered either.
-	//
-	// The old field for OwnedBinWatch, under the same rule as Claims.
-	BinWatch *string `json:"bin_watch,omitempty"`
 	// Asks is every ask kind this Core answers (protocol.AskKinds, as
 	// registered), sorted. The Edge sends an ask of a kind only while the last
 	// ack named it, and refuses the act otherwise: nil (absent) is a Core
-	// without the ask pair. Not sent to an Edge that sends no Feeds.
+	// without the ask pair.
 	Asks []string `json:"asks,omitempty"`
 	// EphemeralTopic is the ephemeral topic (ephemeral.go) this Core created
 	// and whose retention it read back and verified; absent when it has none.
@@ -627,17 +601,12 @@ type OrderUpdate struct {
 }
 
 // OrderDelivered signals fleet delivery complete. It closes the order; the
-// carrier Core placed is bound by its BinLanded, not by this message, except
-// from a Core that sends no landing (see LandingSent).
+// carrier Core placed is bound by its BinLanded, never by this message.
 type OrderDelivered struct {
 	// OrderUUID is the edge's order UUID.
 	OrderUUID string `json:"order_uuid"`
 	// DeliveredAt is when the fleet reported the physical delivery.
 	DeliveredAt time.Time `json:"delivered_at"`
-	// StagedExpireAt, when present, puts the order in staged (dwelling) until
-	// this time or until an order.release arrives. Absent on a delivery that
-	// does not stage.
-	StagedExpireAt *time.Time `json:"staged_expire_at,omitempty"`
 	// BinID is the Core id of the carrier the order leaves at its process
 	// node: the order's one cart, or, for an order that carries several, the
 	// cart its plan sets down last at the process node (see BinDestNode). Nil
@@ -646,26 +615,6 @@ type OrderDelivered struct {
 	// the carrier bound at that seat.
 	BinID *int64 `json:"bin_id,omitempty"`
 
-	// UOPRemaining and DeltaEpoch are BinID's count and delta_epoch, read by
-	// Core after the bin's arrival is applied (handleOrderDelivered).
-	// UOPRemaining is nil when no bin is named or Core could not read the
-	// bin's row, and 0 for a carrier counted empty. A current Edge binds
-	// nothing from them (the landing binds); for an older Core they bind
-	// through the landing verb, and a nil count binds nothing
-	// (engine.landFromOldCore). DeltaEpoch 0 is the unknown sentinel. Both
-	// are meaningful only when BinID is set.
-	UOPRemaining *int  `json:"uop_remaining,omitempty"`
-	DeltaEpoch   int64 `json:"delta_epoch,omitempty"`
-
-	// BinPayloadCode is BinID's payload, read from the same row as
-	// UOPRemaining: what the carrier holds, which the Edge has no bins table
-	// to look up. It is not the active style's claim payload, which is what
-	// the cell asked for and differs from what stands there once a changeover
-	// moves the cell on under a carrier that stays. Pointer so "not
-	// established" (nil) is distinguishable from a carrier known to be empty
-	// (""); the Edge keeps the pair apart as RuntimeState.LinesidePayloadKnown.
-	// Meaningful only when BinID is set.
-	BinPayloadCode *string `json:"bin_payload_code,omitempty"`
 	// DeliveryNode is the Core dot-name of the destination. Populated for all
 	// orders so the Edge can bind the runtime cache even when the order was
 	// created on Core directly (no Edge order row). Broadcast to all edges when
@@ -682,12 +631,11 @@ type OrderDelivered struct {
 	// on its steps' final dropoff or DeliveryNode.
 	BinDestNode string `json:"bin_dest_node,omitempty"`
 
-	// LandingSent says the sending Core announces every carrier's drop on
-	// SubjectBinLanded, so the Edge binds nothing from this message. Unset,
-	// the sender is an older Core that sends no landing, and the Edge routes
-	// the carrier fields above through its landing verb with no placement
-	// stamp: into an empty slot or onto the same bin only, never over a
-	// different bound carrier.
+	// LandingSent is kept for a v0.19.0 Edge, the floor: unset, that Edge takes
+	// the sender for an older Core and binds from this message. Core always
+	// sets it; this Edge does not read it (a delivered binds nothing: the
+	// carrier's landing does, SubjectBinLanded). It goes when FloorEdge is the
+	// release that stopped reading it.
 	LandingSent bool `json:"landing_sent,omitempty"`
 }
 
@@ -739,13 +687,6 @@ type BinPickedUp struct {
 // overtaken landing harmless (the Edge has no inbound dedup, and this subject
 // never expires). It orders on the stamp, not a clock, because a clock can
 // step.
-// EdgeSchemaBinLanded is the first Edge schema version (its applied
-// schema_migrations version, EdgeRegister.SchemaVersion) that can bind a
-// landing: the migration that adds process_node_runtime_states.placed_seq
-// (Lane H, D10). Core sends a landing only to a station registered at or
-// above it, and today's wire (an addressed Bound) to the rest (H.7). The Edge
-// pins its own migration list against this number, so the two cannot drift.
-const EdgeSchemaBinLanded = 20
 
 type BinLanded struct {
 	BinID        int64  `json:"bin_id"`
@@ -1216,6 +1157,12 @@ type NodeInfo struct {
 	// partial home may not be one: the two say opposite things about the same
 	// carriers. False for every other node, and from a Core predating the field.
 	AcceptsPartials bool `json:"accepts_partials,omitempty"`
+	// ClaimedBy names the other stations that claim this physical node (a
+	// claim's own position or a paired one), by display name, comma separated.
+	// The positions picker greys the node with it; no save is refused on it.
+	// Never the receiving station itself. Empty for a group, for a node only
+	// positions name, and from a Core predating the field.
+	ClaimedBy string `json:"claimed_by,omitempty"`
 }
 
 // PayloadBinTypeInfo maps one payload code to one bin-type code.
@@ -1913,22 +1860,10 @@ type UOPAdjustment struct {
 	// Absent or 0 is an older Core, and the Edge clears as it always has. Older
 	// Edges ignore the field.
 	PlacedSeq int64 `json:"placed_seq,omitempty"`
-	// Bound, when true, means the bin was MOVED onto CoreNodeName in Core (admin
-	// Move mirroring a physical relocation the robot-delivery path never recorded
-	// — manual fork-truck recovery, a failed delivery that left the bin
-	// unregistered). Edge binds that node's runtime to the bin: active_bin_id =
-	// BinID, active_bin_epoch = Epoch, remaining_uop_cached = NewRemaining — so
-	// its PLC ticks resume counting the arrived bin. The dual of Released; Core
-	// sets exactly one of the two per message. Core's Move guarantees the
-	// destination held no other bin, so Edge binds ahead of its active-bin guard
-	// and overwrites any stale pointer. Older Edges ignore the field.
-	Bound bool `json:"bound,omitempty"`
-	// Epoch carries the bin's delta_epoch so a bind seeds active_bin_epoch
-	// correctly and subsequent BinUOPDeltas carry the right generation for
-	// Core's epoch-aware dedup. Set on the Bound path (admin Move onto a node)
-	// and on a plain count correction (record_count): when the correction lands
-	// on a staged-but-unbound bin, Edge binds it with this epoch, so the
-	// resumed delta stream carries the bin's current generation. Zero on the
+	// Epoch carries the bin's delta_epoch. Set on a plain count correction
+	// (record_count): when the correction lands on a staged-but-unbound bin,
+	// Edge binds it with this epoch, so the resumed delta stream carries the
+	// bin's current generation, as Core's epoch-aware dedup needs. Zero on the
 	// Released path and from older Cores.
 	Epoch int64 `json:"epoch,omitempty"`
 	// AsOfNet and AsOfSeq are Core's applied_net and last_seq for

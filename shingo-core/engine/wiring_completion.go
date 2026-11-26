@@ -76,9 +76,9 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 
 	// Ship the cart so Edge can attribute PLC tick deltas to the right one: the
 	// order's one cart, or, for an order that carries several, the cart its plan
-	// leaves at the consuming (process) node (F1b, selectConsumingCart). Edge's
-	// bin-ownership flip means active_bin_id at the runtime row is sourced from
-	// this envelope. Read from the carts the order was loaded with: no statement.
+	// leaves at the consuming (process) node (F1b, selectConsumingCart). Edge keeps
+	// it on the order and checks the seat against it; the landing binds the
+	// seat. Read from the carts the order was loaded with: no statement.
 	binID, binDestNode, multiBin := deliveredCart(order)
 	if binID == nil && multiBin {
 		e.logFn("engine: order=%d multi-bin delivered: no cart set down last at process node %q — Edge multi-bin backstop alarm will fire (F1b no-match)",
@@ -90,34 +90,6 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 	if binID == nil && !multiBin {
 		e.logFn("engine: order=%d type=%s shipped order.delivered without bin_id (the order carries no cart at delivery — Edge tick attribution will be silent until next order)",
 			order.ID, order.OrderType)
-	}
-
-	// Snapshot the just-arrived bin's authoritative count + load-lifecycle
-	// epoch onto the envelope so Edge seeds its runtime cache and stamps
-	// outgoing BinUOPDeltas from these — no separate HTTP pull. Read AFTER
-	// applyBinArrivalForOrder above so the bin row reflects the arrival.
-	// Reads whichever bin was selected above: the order's one cart, or the cart
-	// it sets down at the consuming node for multi-tote (F1b). binID nil (unmatched
-	// multi-bin) leaves the snapshot empty and Edge falls back to its default.
-	var uopRemaining *int
-	var deltaEpoch int64
-	var binPayloadCode *string
-	if binID != nil {
-		if bin, binErr := e.db.GetBin(*binID); binErr == nil {
-			u := bin.UOPRemaining
-			uopRemaining = &u
-			deltaEpoch = bin.DeltaEpoch
-			// The payload rode this row the whole time and was dropped on the
-			// line above. The Edge has no bins table and cannot look it up, so
-			// it was inferring the carrier's identity from the requested
-			// style's claim — right until a changeover moved the cell on
-			// underneath a carrier that stayed.
-			p := bin.PayloadCode
-			binPayloadCode = &p
-		} else {
-			e.logFn("engine: order=%d delivered: bin %d uop/epoch lookup failed: %v — the envelope goes out with NO count and the Edge will seat 0 for it",
-				order.ID, *binID, binErr)
-		}
 	}
 
 	// A Core-born order that projects to nobody is heard by no station.
@@ -138,19 +110,13 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 		OrderUUID:   order.EdgeUUID,
 		DeliveredAt: clock.Now().UTC(),
 		// This Core announces every carrier's drop on transit.bin_landed, in
-		// the arrival's transaction (applyArrival above), so a new Edge binds
-		// nothing from this message (H.5, H.7). The bind fields below stay one
-		// release for an Edge too old for the landing; they go, with this
-		// flag, on the cleanup sweep row.
-		LandingSent: true,
-		// StagedExpireAt stays unset: staging no longer expires
-		// (resolveNodeStaging). The field stays on the wire for older Edges.
-		BinID:          binID,
-		UOPRemaining:   uopRemaining,
-		DeltaEpoch:     deltaEpoch,
-		BinPayloadCode: binPayloadCode,
-		DeliveryNode:   order.DeliveryNode,
-		BinDestNode:    binDestNode,
+		// the arrival's transaction (applyArrival above), so an Edge binds
+		// nothing from this message (H.5). The flag stays for a v0.19.0 Edge,
+		// which binds from it when it is unset.
+		LandingSent:  true,
+		BinID:        binID,
+		DeliveryNode: order.DeliveryNode,
+		BinDestNode:  binDestNode,
 	}); err != nil {
 		e.logFn("engine: delivered notification: %v", err)
 	}

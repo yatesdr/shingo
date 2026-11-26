@@ -27,8 +27,9 @@
 //
 // THE TRIGGER IS THE WATCH, NOT THE CANCEL. Nothing is added to the cancel
 // handler: a cancel can be emitted under the fulfillment scanner's lock (a
-// reshuffle dissolve), and a lane-held return runs a synchronous scanner pass —
-// so an attempt from the handler would self-deadlock. The watch
+// reshuffle dissolve), and the door takes onDeckMu, which ranks outside that
+// lock (internal/lockorder) — so an attempt from the handler would break the
+// lock order. The watch
 // (placeCarriedBinIfSettled) runs on the robot poll and the reconciliation
 // loop, neither of which holds that lock.
 

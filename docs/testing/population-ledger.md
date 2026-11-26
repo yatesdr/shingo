@@ -2294,6 +2294,707 @@ No assertion read any of the twelve.
 - citations rewritten: `shingo-edge/engine/wiring_completion.go` (`handleNodeOrderFailed`'s PIN)
 - verified at: the commit that adds this row
 
+### STALE — `TestSeedDemo_PressesDrawFromTheGroupAndTheUnloaderPushesBack`
+- test: `TestSeedDemo_PressesDrawFromTheGroupAndTheUnloaderPushesBack` · pkg `shingocore/cmd/seeddev` · run `-run '^TestSeedDemo_PressesDrawFromTheGroupAndTheUnloaderPushesBack$'` · `shingo-core/cmd/seeddev/seed_demo_mg2_test.go:190` @ `6bd55616` · tags `docker`
+- code: STALE (the return edge it required is the rig defect edge-db-followups Lane E removed)
+- assertion map: renamed `TestSeedDemo_PressesDrawFromTheGroupAndOnlyTheKeeperRefillsIt` (same file). "some claim's outbound_destination is SYN_PRESS_EMPTIES" → "none is, and UNLOADER-A returns drained carriers to the pool ASSY draws its empties from". The push-in and the `coming` term it wanted exercised → `TestKanbanRig_PressAndP5KanbansKeepThePushIn` (`shingo-core/cmd/seeddev/kanban_rig_docker_test.go`), end to end on the two lineside press kanbans. The presses' draw and the second-style assertions are unchanged.
+- mutation: none run for this row; owed: `plants/master.yaml`, UNLOADER-A's `outbound_destination` put back to SYN_PRESS_EMPTIES, which both new assertions refuse by reading
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none (a grep of the tree after the rename found no mention left)
+- verified at: the commit that adds this row
+
+### STALE — `TestScanner_RunOnce_TriggerDuringScan_RerunsOnce`
+- test: `TestScanner_RunOnce_TriggerDuringScan_RerunsOnce` · pkg `shingocore/fulfillment` · run `-run '^TestScanner_TriggerDuringAScan_IsOneMorePassByTheWorker$'` · `shingo-core/fulfillment/scanner_test.go:678` @ `6bd55616` · tags `none`
+- code: STALE (the rerun inside RunOnce went: one worker runs the triggered passes off a one-slot wake)
+- assertion map: a trigger during a scan makes RunOnce scan twice → `TestScanner_TriggerDuringAScan_IsOneMorePassByTheWorker`: RunOnce scans once, and two triggers during it make one more pass, by the worker
+- mutation: `shingo-core/fulfillment/scanner.go` as it was at `6bd55616` (the rerun) · rewritten red at tip: `go test -count=1 -run '^TestScanner_TriggerDuringAScan_IsOneMorePassByTheWorker$' ./fulfillment/` → `scanner_test.go:698: RunOnce made 2 scans, want 1: a trigger during it is the next pass`
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### STALE — `TestScanner_AnOrderParkedThisPassIsNotReAskedInItsRerun`
+- test: `TestScanner_AnOrderParkedThisPassIsNotReAskedInItsRerun` · pkg `shingocore/fulfillment` · run `-run '^TestScanner_AnOrderIsAskedOncePerPassAndAgainByTheTriggeredOne$'` · `shingo-core/fulfillment/scanner_test.go:783` @ `6bd55616` · tags `none`
+- code: STALE (no rerun is left to re-ask in, and the asked-once set that only guarded it went with it)
+- assertion map: one ask over a pass and its rerun → `TestScanner_AnOrderIsAskedOncePerPassAndAgainByTheTriggeredOne`: one ask in the pass, and one more by the pass its trigger asked for
+- mutation: `shingo-core/fulfillment/scanner.go` as it was at `6bd55616` (the rerun) · rewritten red at tip: `go test -count=1 -run '^TestScanner_AnOrderIsAskedOncePerPassAndAgainByTheTriggeredOne$' ./fulfillment/` → `eventually.go:17: condition not met within 2s` (the triggered pass never came)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: `shingo-core/fulfillment/scanner.go` (`passLocked`)
+- verified at: the commit that adds this row
+
+### STALE — `TestLifecycleAnnounce_ASeatTwoStationsClaimGoesToNobody`
+- test: `TestLifecycleAnnounce_ASeatTwoStationsClaimGoesToNobody` · pkg `shingocore/service` · run `-run '^TestLifecycleAnnounce_ASeatTwoStationsClaimGoesToNobody$'` · `shingo-core/service/lifecycle_announce_address_docker_test.go:184` @ `6bd55616` · tags `docker`
+- code: STALE (owner ruling 2026-11-22: a correction at a seat several stations claim goes to every claimant)
+- assertion map: renamed `TestLifecycleAnnounce_ASeatTwoStationsClaimGoesToBoth` (same file): a lifecycle clear at a seat two stations claim sends no row (flipped: one row to each). The person's count and reset and the late draw are `TestLifecycleAnnounce_EveryCorrectionAtATwoClaimSeat`
+- mutation: the old assertions over the new rule, on a scratch copy at `f804d6946`, went red: `lifecycle_announce_address_docker_test.go:200: a seat two stations claim got announcement rows to ["edge-l2-a.line" "edge-l2-b.line"], want none`; the rewritten test against the old rule was not run
+- coverage Δ: not measured for this row (the same function runs under the new name)
+- citations rewritten: `TestLifecycleAnnounce_EveryCorrectionAtATwoClaimSeat`'s header
+- verified at: the commit that adds this row
+
+### DEAD — `TestAutoRequestDrop_EveryRowReadsTheSame`
+- test: `TestAutoRequestDrop_EveryRowReadsTheSame` · pkg `shingoedge/store` · run `-run '^TestAutoRequestDrop_EveryRowReadsTheSame$'` · `shingo-edge/store/auto_request_drop_migration_test.go:190` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v55 drops auto_request_payload and every other value reads the same → none for the one-time move; that a dropped column does not come back is TestBoot_ASecondStartChangesNothing and TestBaselineIsCurrent
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestAutoRequestDrop_FreshNeverHasIt`
+- test: `TestAutoRequestDrop_FreshNeverHasIt` · pkg `shingoedge/store` · run `-run '^TestAutoRequestDrop_FreshNeverHasIt$'` · `shingo-edge/store/auto_request_drop_migration_test.go:255` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v55 drops auto_request_payload and every other value reads the same → none for the one-time move; that a dropped column does not come back is TestBoot_ASecondStartChangesNothing and TestBaselineIsCurrent
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestCoreLoaderEdgeMigration_AddsTheColumnsBlank`
+- test: `TestCoreLoaderEdgeMigration_AddsTheColumnsBlank` · pkg `shingoedge/store` · run `-run '^TestCoreLoaderEdgeMigration_AddsTheColumnsBlank$'` · `shingo-edge/store/core_loader_edge_migration_test.go:22` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v57 adds three columns blank to an older file → none for the one-time move
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestCoreLoaderEdgeMigration_FreshHasThemAndTheyHold`
+- test: `TestCoreLoaderEdgeMigration_FreshHasThemAndTheyHold` · pkg `shingoedge/store` · run `-run '^TestCoreLoaderEdgeMigration_FreshHasThemAndTheyHold$'` · `shingo-edge/store/core_loader_edge_migration_test.go:96` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: a born database has the three v57 columns and they hold → TestCoreLoaderEdge_CachedAndKeptOnAScreen
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestCoreLoadersCache_LeavesBareReplacesTheBareCodeColumn`
+- test: `TestCoreLoadersCache_LeavesBareReplacesTheBareCodeColumn` · pkg `shingoedge/store` · run `-run '^TestCoreLoadersCache_LeavesBareReplacesTheBareCodeColumn$'` · `shingo-edge/store/core_loaders_options_test.go:65` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: the chain swaps bare_bin_type_code for leaves_bare → none for the one-time move; the options are TestCoreLoadersCache_OptionsSurviveReopen
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV4DropsCycleSeconds_AgedThenIdenticalSecondBoot`
+- test: `TestV4DropsCycleSeconds_AgedThenIdenticalSecondBoot` · pkg `shingoedge/store` · run `-run '^TestV4DropsCycleSeconds_AgedThenIdenticalSecondBoot$'` · `shingo-edge/store/cycle_seconds_drop_migration_test.go:85` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v3 drops payload_catalog.cycle_seconds and no start re-adds it → TestBoot_ASecondStartChangesNothing and TestBaselineIsCurrent
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV4DropsCycleSeconds_FreshIsNoOp`
+- test: `TestV4DropsCycleSeconds_FreshIsNoOp` · pkg `shingoedge/store` · run `-run '^TestV4DropsCycleSeconds_FreshIsNoOp$'` · `shingo-edge/store/cycle_seconds_drop_migration_test.go:120` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v3 drops payload_catalog.cycle_seconds and no start re-adds it → TestBoot_ASecondStartChangesNothing and TestBaselineIsCurrent
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestDropAutoCutover_StaysDroppedOnTheSecondBoot`
+- test: `TestDropAutoCutover_StaysDroppedOnTheSecondBoot` · pkg `shingoedge/store` · run `-run '^TestDropAutoCutover_StaysDroppedOnTheSecondBoot$'` · `shingo-edge/store/drop_auto_cutover_migration_test.go:18` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v42 drops processes.auto_cutover_enabled and no start re-adds it → TestBoot_ASecondStartChangesNothing and TestBaselineIsCurrent
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestDropAutoCutover_FreshNeverHasIt`
+- test: `TestDropAutoCutover_FreshNeverHasIt` · pkg `shingoedge/store` · run `-run '^TestDropAutoCutover_FreshNeverHasIt$'` · `shingo-edge/store/drop_auto_cutover_migration_test.go:50` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v42 drops processes.auto_cutover_enabled and no start re-adds it → TestBoot_ASecondStartChangesNothing and TestBaselineIsCurrent
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestFrozenChainIsPinned`
+- test: `TestFrozenChainIsPinned` · pkg `shingoedge/store` · run `-run '^TestFrozenChainIsPinned$'` · `shingo-edge/store/frozen_chain_pin_test.go:73` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: the frozen chain's statement count and its tail → the chain is deleted; TestBaselineIsCurrent is the schema's one home
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestUpgradeDropsTheKeepStagedFlag`
+- test: `TestUpgradeDropsTheKeepStagedFlag` · pkg `shingoedge/store` · run `-run '^TestUpgradeDropsTheKeepStagedFlag$'` · `shingo-edge/store/keep_staged_upgrade_migration_test.go:19` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: the rebuild drops keep_staged, and a later start keeps a name set after it → none for the one-time move; the later start is TestBoot_ASecondStartChangesNothing (its claim names a spot)
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestLoaderWindowMigration_AddsTheColumnUnmarked`
+- test: `TestLoaderWindowMigration_AddsTheColumnUnmarked` · pkg `shingoedge/store` · run `-run '^TestLoaderWindowMigration_AddsTheColumnUnmarked$'` · `shingo-edge/store/loader_window_migration_test.go:18` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v56 adds loader_window 0 to an older file → none for the one-time move
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestLoaderWindowMigration_FreshHasItAndTheMarkOnlySets`
+- test: `TestLoaderWindowMigration_FreshHasItAndTheMarkOnlySets` · pkg `shingoedge/store` · run `-run '^TestLoaderWindowMigration_FreshHasItAndTheMarkOnlySets$'` · `shingo-edge/store/loader_window_migration_test.go:79` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: a born database has loader_window and the mark only sets → TestLoaderWindow_TheMarkOnlySets
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV27_FreshDatabaseHasNeitherTableNorKind`
+- test: `TestV27_FreshDatabaseHasNeitherTableNorKind` · pkg `shingoedge/store` · run `-run '^TestV27_FreshDatabaseHasNeitherTableNorKind$'` · `shingo-edge/store/loader_wire_drop_migration_test.go:33` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v27 drops the carrier-mix tables and position kind → none for the one-time move; a born database's shape is TestBaselineIsCurrent
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV27_AgedDatabaseDropsThemAndTheNextBootLeavesThemDropped`
+- test: `TestV27_AgedDatabaseDropsThemAndTheNextBootLeavesThemDropped` · pkg `shingoedge/store` · run `-run '^TestV27_AgedDatabaseDropsThemAndTheNextBootLeavesThemDropped$'` · `shingo-edge/store/loader_wire_drop_migration_test.go:49` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v27 drops the carrier-mix tables and position kind → none for the one-time move; a born database's shape is TestBaselineIsCurrent
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV27_ThePreviousBuildsLoaderStatementsStillRun`
+- test: `TestV27_ThePreviousBuildsLoaderStatementsStillRun` · pkg `shingoedge/store` · run `-run '^TestV27_ThePreviousBuildsLoaderStatementsStillRun$'` · `shingo-edge/store/loader_wire_drop_migration_test.go:88` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: a build older than v27 still runs its loader statements → none: that build is below the floor; the previous release on this schema is TestRetiredChainReleaseRunsOnThisSchema
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV27_RolledBackThenForward`
+- test: `TestV27_RolledBackThenForward` · pkg `shingoedge/store` · run `-run '^TestV27_RolledBackThenForward$'` · `shingo-edge/store/loader_wire_drop_migration_test.go:122` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v27 drops the carrier-mix tables and position kind → none for the one-time move; a born database's shape is TestBaselineIsCurrent
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestMigration_CurtainMovesToNodes`
+- test: `TestMigration_CurtainMovesToNodes` · pkg `shingoedge/store` · run `-run '^TestMigration_CurtainMovesToNodes$'` · `shingo-edge/store/migrations_curtain_test.go:34` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v6 moves the curtain settings from the process to its nodes → none for the one-time move
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestMigrate_LinesidePilesFoldToOneIdentity`
+- test: `TestMigrate_LinesidePilesFoldToOneIdentity` · pkg `shingoedge/store` · run `-run '^TestMigrate_LinesidePilesFoldToOneIdentity$'` · `shingo-edge/store/migrations_lineside_piles_test.go:56` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: old piles fold to one identity, which the database holds → none for the fold; the identity is TestPiles_OneRowPerNodePartAndState
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestMigrate_LinesidePilesStrandsWhatTheActiveStyleDoesNotClaim`
+- test: `TestMigrate_LinesidePilesStrandsWhatTheActiveStyleDoesNotClaim` · pkg `shingoedge/store` · run `-run '^TestMigrate_LinesidePilesStrandsWhatTheActiveStyleDoesNotClaim$'` · `shingo-edge/store/migrations_lineside_piles_test.go:138` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: the fold strands what the active style does not claim → none for the one-time move
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestMigrate_RenameRebuildLeavesNoDanglingReferences`
+- test: `TestMigrate_RenameRebuildLeavesNoDanglingReferences` · pkg `shingoedge/store` · run `-run '^TestMigrate_RenameRebuildLeavesNoDanglingReferences$'` · `shingo-edge/store/migrations_rename_fk_test.go:35` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: a rename-rebuild leaves no child naming the scratch table, with legacy_alter_table held and restored → TestSchema_NoForeignKeyNamesAMissingTable; v60's rebuild is TestV60_RebuildsWithoutLosing
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestRebuildTable_AssertsLegacyAlterTableTook`
+- test: `TestRebuildTable_AssertsLegacyAlterTableTook` · pkg `shingoedge/store` · run `-run '^TestRebuildTable_AssertsLegacyAlterTableTook$'` · `shingo-edge/store/migrations_rename_fk_test.go:200` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: a rename-rebuild leaves no child naming the scratch table, with legacy_alter_table held and restored → TestSchema_NoForeignKeyNamesAMissingTable; v60's rebuild is TestV60_RebuildsWithoutLosing
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestStrandedRebuild_IncompleteCopyRefusesToStart`
+- test: `TestStrandedRebuild_IncompleteCopyRefusesToStart` · pkg `shingoedge/store` · run `-run '^TestStrandedRebuild_IncompleteCopyRefusesToStart$'` · `shingo-edge/store/migrations_stranded_rebuild_test.go:96` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: a half-finished non-transactional v33 rebuild is refused or finished → none: that rebuild is deleted, and v60's is one transaction (TestV60_AFailureChangesNothing)
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestStrandedRebuild_CompletedCopyFinishesTheDrop`
+- test: `TestStrandedRebuild_CompletedCopyFinishesTheDrop` · pkg `shingoedge/store` · run `-run '^TestStrandedRebuild_CompletedCopyFinishesTheDrop$'` · `shingo-edge/store/migrations_stranded_rebuild_test.go:118` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: a half-finished non-transactional v33 rebuild is refused or finished → none: that rebuild is deleted, and v60's is one transaction (TestV60_AFailureChangesNothing)
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestStrandedRebuild_LeavesANormalMigrationAlone`
+- test: `TestStrandedRebuild_LeavesANormalMigrationAlone` · pkg `shingoedge/store` · run `-run '^TestStrandedRebuild_LeavesANormalMigrationAlone$'` · `shingo-edge/store/migrations_stranded_rebuild_test.go:150` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: a half-finished non-transactional v33 rebuild is refused or finished → none: that rebuild is deleted, and v60's is one transaction (TestV60_AFailureChangesNothing)
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestRebuildStyleNodeClaims_PreservesRowsAndIDs`
+- test: `TestRebuildStyleNodeClaims_PreservesRowsAndIDs` · pkg `shingoedge/store` · run `-run '^TestRebuildStyleNodeClaims_PreservesRowsAndIDs$'` · `shingo-edge/store/migrations_style_claims_test.go:88` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: the v33 rebuild keeps rows and ids and runs once → none for the one-time move; a start that changes nothing is TestBoot_ASecondStartChangesNothing
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestRebuildStyleNodeClaims_DropsTheDefaults`
+- test: `TestRebuildStyleNodeClaims_DropsTheDefaults` · pkg `shingoedge/store` · run `-run '^TestRebuildStyleNodeClaims_DropsTheDefaults$'` · `shingo-edge/store/migrations_style_claims_test.go:127` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: the rebuilt claims table arms nothing by default → TestClaimDefaults_AHandWrittenInsertArmsNothing
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestRebuildStyleNodeClaims_ReferencesStillPointAtTheRealTable`
+- test: `TestRebuildStyleNodeClaims_ReferencesStillPointAtTheRealTable` · pkg `shingoedge/store` · run `-run '^TestRebuildStyleNodeClaims_ReferencesStillPointAtTheRealTable$'` · `shingo-edge/store/migrations_style_claims_test.go:181` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: the rebuild leaves no reference at its scratch table → TestSchema_NoForeignKeyNamesAMissingTable
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestRebuildStyleNodeClaims_DoesNotRunAgain`
+- test: `TestRebuildStyleNodeClaims_DoesNotRunAgain` · pkg `shingoedge/store` · run `-run '^TestRebuildStyleNodeClaims_DoesNotRunAgain$'` · `shingo-edge/store/migrations_style_claims_test.go:220` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: the v33 rebuild keeps rows and ids and runs once → none for the one-time move; a start that changes nothing is TestBoot_ASecondStartChangesNothing
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestRebuildStyleNodeClaims_Idempotent`
+- test: `TestRebuildStyleNodeClaims_Idempotent` · pkg `shingoedge/store` · run `-run '^TestRebuildStyleNodeClaims_Idempotent$'` · `shingo-edge/store/migrations_style_claims_test.go:248` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: the v33 rebuild keeps rows and ids and runs once → none for the one-time move; a start that changes nothing is TestBoot_ASecondStartChangesNothing
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestOpenMigratesLegacyOrdersWithoutProcessNodeID`
+- test: `TestOpenMigratesLegacyOrdersWithoutProcessNodeID` · pkg `shingoedge/store` · run `-run '^TestOpenMigratesLegacyOrdersWithoutProcessNodeID$'` · `shingo-edge/store/migration_test.go:10` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: a legacy shape is rebuilt or stripped by the chain → none for the one-time move; such a file is refused (TestSchemaConvergesAcrossVintages walks one up through v0.19.0)
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestOpenRebuildsOperatorStationsWithoutParentHierarchy`
+- test: `TestOpenRebuildsOperatorStationsWithoutParentHierarchy` · pkg `shingoedge/store` · run `-run '^TestOpenRebuildsOperatorStationsWithoutParentHierarchy$'` · `shingo-edge/store/migration_test.go:66` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: a legacy shape is rebuilt or stripped by the chain → none for the one-time move; such a file is refused (TestSchemaConvergesAcrossVintages walks one up through v0.19.0)
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestOpenMigratesLegacyProcessNodeTablesIntoNewProcessOwnershipModel`
+- test: `TestOpenMigratesLegacyProcessNodeTablesIntoNewProcessOwnershipModel` · pkg `shingoedge/store` · run `-run '^TestOpenMigratesLegacyProcessNodeTablesIntoNewProcessOwnershipModel$'` · `shingo-edge/store/migration_test.go:137` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: a legacy shape is rebuilt or stripped by the chain → none for the one-time move; such a file is refused (TestSchemaConvergesAcrossVintages walks one up through v0.19.0)
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestOpenCreatesNodeLinesideBucketTable`
+- test: `TestOpenCreatesNodeLinesideBucketTable` · pkg `shingoedge/store` · run `-run '^TestOpenCreatesNodeLinesideBucketTable$'` · `shingo-edge/store/migration_test.go:283` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: a born database has the pile table and its one UNIQUE → TestPiles_OneRowPerNodePartAndState and TestBaselineIsCurrent
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestMigration_DropsDropViaStagingColumn`
+- test: `TestMigration_DropsDropViaStagingColumn` · pkg `shingoedge/store` · run `-run '^TestMigration_DropsDropViaStagingColumn$'` · `shingo-edge/store/migration_test.go:348` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: a legacy shape is rebuilt or stripped by the chain → none for the one-time move; such a file is refused (TestSchemaConvergesAcrossVintages walks one up through v0.19.0)
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestMigration_AddsQueueCodeColumn`
+- test: `TestMigration_AddsQueueCodeColumn` · pkg `shingoedge/store` · run `-run '^TestMigration_AddsQueueCodeColumn$'` · `shingo-edge/store/migration_test.go:401` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: orders.queue_code arrives and round-trips → TestBoot_AQueuedOrderStaysQueuedWithItsReason
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestMigrate_V44_ABoundCartWithNoPartTakesItsClaimsPartAssumed`
+- test: `TestMigrate_V44_ABoundCartWithNoPartTakesItsClaimsPartAssumed` · pkg `shingoedge/store` · run `-run '^TestMigrate_V44_ABoundCartWithNoPartTakesItsClaimsPartAssumed$'` · `shingo-edge/store/migration_v44_assumed_test.go:16` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v44 backfills a bound cart's part from its claim, assumed → none for the one-time move
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestOneHome_TheBaselineCreatesNeitherNewTable`
+- test: `TestOneHome_TheBaselineCreatesNeitherNewTable` · pkg `shingoedge/store` · run `-run '^TestOneHome_TheBaselineCreatesNeitherNewTable$'` · `shingo-edge/store/new_tables_one_home_test.go:22` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: a new table's one home is the versioned chain → TestBaselineIsCurrent: the one home is a migration and the baseline generated from it
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestOneHome_FreshAndV36DatabasesGetThemFromTheChain`
+- test: `TestOneHome_FreshAndV36DatabasesGetThemFromTheChain` · pkg `shingoedge/store` · run `-run '^TestOneHome_FreshAndV36DatabasesGetThemFromTheChain$'` · `shingo-edge/store/new_tables_one_home_test.go:41` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: a new table's one home is the versioned chain → TestBaselineIsCurrent: the one home is a migration and the baseline generated from it
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV3PendingIntent_AgedThenSecondBoot`
+- test: `TestV3PendingIntent_AgedThenSecondBoot` · pkg `shingoedge/store` · run `-run '^TestV3PendingIntent_AgedThenSecondBoot$'` · `shingo-edge/store/orders_pending_intent_test.go:36` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v4 adds pending_intent once → none for the one-time move; the take stays TestPendingIntentTakeIsExactlyOnce
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV3PendingIntent_NoOpWhenColumnPresent`
+- test: `TestV3PendingIntent_NoOpWhenColumnPresent` · pkg `shingoedge/store` · run `-run '^TestV3PendingIntent_NoOpWhenColumnPresent$'` · `shingo-edge/store/orders_pending_intent_test.go:86` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v4 is a no-op where the column stands → none for the one-time move
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV30_TheUpgradeAddsTheWantAndThePreviousBuildStillWrites`
+- test: `TestV30_TheUpgradeAddsTheWantAndThePreviousBuildStillWrites` · pkg `shingoedge/store` · run `-run '^TestV30_TheUpgradeAddsTheWantAndThePreviousBuildStillWrites$'` · `shingo-edge/store/orders_want_migration_test.go:15` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v30 adds want, and a row stating none reads none → TestOrders_ARowStatingNoWantReadsNone
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV2DropsOrphanLoaderTables_AgedThenSecondBoot`
+- test: `TestV2DropsOrphanLoaderTables_AgedThenSecondBoot` · pkg `shingoedge/store` · run `-run '^TestV2DropsOrphanLoaderTables_AgedThenSecondBoot$'` · `shingo-edge/store/orphan_loader_tables_migration_test.go:53` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v2 drops two orphan loader tables → none for the one-time move; a born database's shape is TestBaselineIsCurrent
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV2DropsOrphanLoaderTables_NoOpWhenAlreadyGone`
+- test: `TestV2DropsOrphanLoaderTables_NoOpWhenAlreadyGone` · pkg `shingoedge/store` · run `-run '^TestV2DropsOrphanLoaderTables_NoOpWhenAlreadyGone$'` · `shingo-edge/store/orphan_loader_tables_migration_test.go:94` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v2 drops two orphan loader tables → none for the one-time move; a born database's shape is TestBaselineIsCurrent
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV2DropsOrphanLoaderTables_SelfHealsWhenRecordedButPresent`
+- test: `TestV2DropsOrphanLoaderTables_SelfHealsWhenRecordedButPresent` · pkg `shingoedge/store` · run `-run '^TestV2DropsOrphanLoaderTables_SelfHealsWhenRecordedButPresent$'` · `shingo-edge/store/orphan_loader_tables_migration_test.go:123` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v2 drops two orphan loader tables → none for the one-time move; a born database's shape is TestBaselineIsCurrent
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestUpgradeClearsThePairsOfAModeThatNamesNone`
+- test: `TestUpgradeClearsThePairsOfAModeThatNamesNone` · pkg `shingoedge/store` · run `-run '^TestUpgradeClearsThePairsOfAModeThatNamesNone$'` · `shingo-edge/store/paired_positions_upgrade_migration_test.go:18` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v29 clears pairs a mode names none of, once → none for the one-time move; the save rule is TestUpsertClaim_StoresNoPairOnAModeThatNamesNone
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestCollapseRetired_APositionPutBackOnNoScreenSurvivesARestart`
+- test: `TestCollapseRetired_APositionPutBackOnNoScreenSurvivesARestart` · pkg `shingoedge/store` · run `-run '^TestCollapseRetired_APositionPutBackOnNoScreenSurvivesARestart$'` · `shingo-edge/store/process_node_dedupe_retired_test.go:88` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: a position put back survives a restart beside its retired row → TestPositions_PutBackSurvivesARestart
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestCollapseRetired_APositionPutBackOnItsScreenChangesNothingAtARestart`
+- test: `TestCollapseRetired_APositionPutBackOnItsScreenChangesNothingAtARestart` · pkg `shingoedge/store` · run `-run '^TestCollapseRetired_APositionPutBackOnItsScreenChangesNothingAtARestart$'` · `shingo-edge/store/process_node_dedupe_retired_test.go:110` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: a position put back survives a restart beside its retired row → TestPositions_PutBackSurvivesARestart
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestCollapseRetired_LiveDuplicatesAreStillCollapsed`
+- test: `TestCollapseRetired_LiveDuplicatesAreStillCollapsed` · pkg `shingoedge/store` · run `-run '^TestCollapseRetired_LiveDuplicatesAreStillCollapsed$'` · `shingo-edge/store/process_node_dedupe_retired_test.go:127` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: live duplicates are collapsed beside a retired row → none: the step is deleted; the index is TestPositions_OneLiveRowPerNode
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestCollapseDuplicateProcessNodes_KeepsStationBoundRowAndRepoints`
+- test: `TestCollapseDuplicateProcessNodes_KeepsStationBoundRowAndRepoints` · pkg `shingoedge/store` · run `-run '^TestCollapseDuplicateProcessNodes_KeepsStationBoundRowAndRepoints$'` · `shingo-edge/store/process_node_dedupe_test.go:58` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: the boot collapse of duplicate positions → none: the step is deleted; the index that forbids the duplicates is TestPositions_OneLiveRowPerNode
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestCollapseDuplicateProcessNodes_EnforcesUniqueAfterwards`
+- test: `TestCollapseDuplicateProcessNodes_EnforcesUniqueAfterwards` · pkg `shingoedge/store` · run `-run '^TestCollapseDuplicateProcessNodes_EnforcesUniqueAfterwards$'` · `shingo-edge/store/process_node_dedupe_test.go:129` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: one live position per node in a process → TestPositions_OneLiveRowPerNode
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestCollapseDuplicateProcessNodes_NoopWhenClean`
+- test: `TestCollapseDuplicateProcessNodes_NoopWhenClean` · pkg `shingoedge/store` · run `-run '^TestCollapseDuplicateProcessNodes_NoopWhenClean$'` · `shingo-edge/store/process_node_dedupe_test.go:146` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: the boot collapse of duplicate positions → none: the step is deleted; the index that forbids the duplicates is TestPositions_OneLiveRowPerNode
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestCollapseDuplicateProcessNodes_UnboundNodesAreNotDuplicates`
+- test: `TestCollapseDuplicateProcessNodes_UnboundNodesAreNotDuplicates` · pkg `shingoedge/store` · run `-run '^TestCollapseDuplicateProcessNodes_UnboundNodesAreNotDuplicates$'` · `shingo-edge/store/process_node_dedupe_test.go:180` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: positions naming no node are not duplicates → TestPositions_OneLiveRowPerNode
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestCollapseDuplicateProcessNodes_MovesPilesThatDoNotCollide`
+- test: `TestCollapseDuplicateProcessNodes_MovesPilesThatDoNotCollide` · pkg `shingoedge/store` · run `-run '^TestCollapseDuplicateProcessNodes_MovesPilesThatDoNotCollide$'` · `shingo-edge/store/process_node_dedupe_test.go:240` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: the boot collapse of duplicate positions → none: the step is deleted; the index that forbids the duplicates is TestPositions_OneLiveRowPerNode
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestCollapseDuplicateProcessNodes_GroupIsAtomic`
+- test: `TestCollapseDuplicateProcessNodes_GroupIsAtomic` · pkg `shingoedge/store` · run `-run '^TestCollapseDuplicateProcessNodes_GroupIsAtomic$'` · `shingo-edge/store/process_node_dedupe_test.go:290` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: the boot collapse of duplicate positions → none: the step is deleted; the index that forbids the duplicates is TestPositions_OneLiveRowPerNode
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestUpgradeCollapsesARecipesOneNodeRoles`
+- test: `TestUpgradeCollapsesARecipesOneNodeRoles` · pkg `shingoedge/store` · run `-run '^TestUpgradeCollapsesARecipesOneNodeRoles$'` · `shingo-edge/store/recipe_routing_migration_test.go:15` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: the recipe migration collapses one-node roles → none for the one-time move
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV47MovesTheRefillSettingAndDropsTheSwitch`
+- test: `TestV47MovesTheRefillSettingAndDropsTheSwitch` · pkg `shingoedge/store` · run `-run '^TestV47MovesTheRefillSettingAndDropsTheSwitch$'` · `shingo-edge/store/refill_by_migration_test.go:38` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v47 moves the refill setting and drops the switch → none for the one-time move
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV47FreshIsBornWithRefillBy`
+- test: `TestV47FreshIsBornWithRefillBy` · pkg `shingoedge/store` · run `-run '^TestV47FreshIsBornWithRefillBy$'` · `shingo-edge/store/refill_by_migration_test.go:255` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: a born claims table defaults refill_by to clearing_robot → TestClaimDefaults_AHandWrittenInsertArmsNothing
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestReorderSourceDrop_EveryRowReadsTheSame`
+- test: `TestReorderSourceDrop_EveryRowReadsTheSame` · pkg `shingoedge/store` · run `-run '^TestReorderSourceDrop_EveryRowReadsTheSame$'` · `shingo-edge/store/reorder_source_drop_migration_test.go:108` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v48 drops reorder_point_source and every other value reads the same → none for the one-time move; that it does not come back is TestBoot_ASecondStartChangesNothing
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestReorderSourceDrop_FreshNeverHasIt`
+- test: `TestReorderSourceDrop_FreshNeverHasIt` · pkg `shingoedge/store` · run `-run '^TestReorderSourceDrop_FreshNeverHasIt$'` · `shingo-edge/store/reorder_source_drop_migration_test.go:204` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v48 drops reorder_point_source and every other value reads the same → none for the one-time move; that it does not come back is TestBoot_ASecondStartChangesNothing
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestRoutingBackfill_PlantA`
+- test: `TestRoutingBackfill_PlantA` · pkg `shingoedge/store` · run `-run '^TestRoutingBackfill_PlantA$'` · `shingo-edge/store/routing_set_backfill_test.go:290` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v25's backfill over the two synthetic plants, and deleting a live source names its styles → none for the backfill; naming the styles is asserted in routing_set_test.go over DeleteRoutingNode
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestRoutingBackfill_PlantB`
+- test: `TestRoutingBackfill_PlantB` · pkg `shingoedge/store` · run `-run '^TestRoutingBackfill_PlantB$'` · `shingo-edge/store/routing_set_backfill_test.go:348` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v25's backfill over the two synthetic plants, and deleting a live source names its styles → none for the backfill; naming the styles is asserted in routing_set_test.go over DeleteRoutingNode
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV31V32SplitThresholdFromReorderPoint`
+- test: `TestV31V32SplitThresholdFromReorderPoint` · pkg `shingoedge/store` · run `-run '^TestV31V32SplitThresholdFromReorderPoint$'` · `shingo-edge/store/threshold_split_migration_test.go:31` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v31 and v32 split the threshold from the reorder point → none for the one-time move
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestV31V32NoOpOnFreshDB`
+- test: `TestV31V32NoOpOnFreshDB` · pkg `shingoedge/store` · run `-run '^TestV31V32NoOpOnFreshDB$'` · `shingo-edge/store/threshold_split_migration_test.go:65` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: v31 and v32 split the threshold from the reorder point → none for the one-time move
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestOpenSeedsSchemaMigrationsBaseline_Fresh`
+- test: `TestOpenSeedsSchemaMigrationsBaseline_Fresh` · pkg `shingoedge/store` · run `-run '^TestOpenSeedsSchemaMigrationsBaseline_Fresh$'` · `shingo-edge/store/versioned_migration_test.go:22` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: a fresh file records the whole chain → TestBorn_RecordsEveryVersion
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestOpenSeedsSchemaMigrationsBaseline_Aged`
+- test: `TestOpenSeedsSchemaMigrationsBaseline_Aged` · pkg `shingoedge/store` · run `-run '^TestOpenSeedsSchemaMigrationsBaseline_Aged$'` · `shingo-edge/store/versioned_migration_test.go:58` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: tables with no version table are adopted at v1 → reversed by the retirement: TestBoot_TheFilesAStartTakes refuses them, naming v0.19.0
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestEdgeSchemaBinLandedIsThePlacedSeqMigration`
+- test: `TestEdgeSchemaBinLandedIsThePlacedSeqMigration` · pkg `shingoedge/store` · run `-run '^TestEdgeSchemaBinLandedIsThePlacedSeqMigration$'` · `shingo-edge/store/versioned_migration_test.go:190` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: the landing gate's number is the placed_seq migration's → TestSchema_EveryBornDatabaseCanBindALanding
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestAlterPassMatchesBaselineCreate`
+- test: `TestAlterPassMatchesBaselineCreate` · pkg `shingoedge/internal/schemadump` · run `-run '^TestAlterPassMatchesBaselineCreate$'` · `shingo-edge/internal/schemadump/snapshot_test.go:345` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run it)
+- assertion map: the ALTER pass and the baseline CREATE declare a column the same way → none: there is one statement of a column now, the generated baseline's (TestBaselineIsCurrent)
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestClaimCapacity_StoredColumnIsNoLongerWritten`
+- test: `TestClaimCapacity_StoredColumnIsNoLongerWritten` · pkg `shingoedge/store` · run `-run '^TestClaimCapacity_StoredColumnIsNoLongerWritten$'` · `shingo-edge/store/claim_capacity_test.go:289` @ `6bd55616` · tags `none`
+- code: DEAD (Edge v60 drops style_node_claims.uop_capacity)
+- assertion map: no writer fills the dead claim column → none: the column is gone (TestBaselineIsCurrent); that capacity is the catalog's stays in TestClaimCapacity_ResolvesFromCatalogNotTheStoredCopy
+- mutation: not run (the column it pinned is dropped)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestRoutingDerive_ALaneOnEachLeg`
+- test: `TestRoutingDerive_ALaneOnEachLeg` · pkg `shingoedge/www` · run `-run '^TestRoutingDerive_ALaneOnEachLeg$'` · `shingo-edge/www/claim_leg_writers_test.go:394` @ `6bd55616` · tags `none`
+- code: DEAD (the Edge's chain is retired at v59 and deleted: no database this build accepts can run v25)
+- assertion map: v25's backfill derives a lane on each leg → none for the one-time move; every live writer handed a lane stays in this file's other censuses
+- mutation: not run (the code it pinned is deleted, not weakened)
+- coverage Δ: not measured (no before/after profile was taken)
+- citations rewritten: none
+- verified at: the commit that adds this row
+
+### DEAD — `TestEdgeHeartbeatAck_BinWatchGolden`
+- test: `TestEdgeHeartbeatAck_BinWatchGolden` · pkg `shingo/protocol` · run `-run '^TestEdgeHeartbeatAck_BinWatchGolden$'` · `protocol/bins_feed_test.go` @ `6bd55616` · tags `none`
+- code: DEAD (`EdgeHeartbeatAck.bin_watch` is deleted at the v0.19.0 floor: no Core fills it for an Edge that quotes the owned map, and every Edge at the floor does).
+- assertion map: the ack's bytes, key order and the null rule → `TestOwned_AbsenceOnTheWire` "an ack with no owned answer", less `claims`; the three `bin_watch` renderings → nothing (the key is gone; `TestPeerWire_*` v0.19.0/EdgeHeartbeatAck says a v0.19.0 peer loses nothing else).
+
+### DEAD — `TestH7_AnOlderCoresDeliveredNeverDisplacesADifferentCarrier`
+- test: `TestH7_AnOlderCoresDeliveredNeverDisplacesADifferentCarrier` · pkg `shingoedge/engine` · run `-run '^TestH7_AnOlderCoresDeliveredNeverDisplacesADifferentCarrier$'` · `shingo-edge/engine/carrier_handoff_pending_test.go` @ `6bd55616` · tags `none`
+- code: DEAD (`landFromOldCore`, the older Core's bind from order.delivered, is deleted at the v0.19.0 floor).
+- assertion map: a delivered never displaces a different carrier (bin and count) → `TestH5_ADeliveredNeverDisplacesADifferentCarrier`, same assertion; onto an empty seat it binds → nothing (that bind is what went; `TestFloorWire_ADeliveredWithLandingSentIsTheOrdersAlone` pins the empty seat left empty, `TestControlH_EmptySeatLandingSeedsCoresCount` the landing's bind).
+
+### DEAD — `TestHandleDelivered_FallbackCarriesThePayload`
+- test: `TestHandleDelivered_FallbackCarriesThePayload` · pkg `shingoedge/orders` · run `-run '^TestHandleDelivered_FallbackCarriesThePayload$'` · `shingo-edge/orders/manager_db_test.go` @ `6bd55616` · tags `none`
+- code: DEAD (`OrderDelivered.bin_payload_code` is deleted at the v0.19.0 floor: only `landFromOldCore` read it).
+- assertion map: one fallback for an order with no Edge row → `TestHandleDelivered_FallbackNamesTheCarrierAndNode`, which adds the bin and node; the carrier's part on that path → `TestFallbackDelivered_RecordsTheCarrier`, through the landing that now carries it.
+
+### DEAD — `TestHandleDeliveredWithExpiry_StoresStagedExpireAt`
+- test: `TestHandleDeliveredWithExpiry_StoresStagedExpireAt` · pkg `shingoedge/orders` · run `-run '^TestHandleDeliveredWithExpiry_StoresStagedExpireAt$'` · `shingo-edge/orders/manager_db_test.go` @ `6bd55616` · tags `none`
+- code: DEAD (`OrderDelivered.staged_expire_at` and its writer are deleted at the v0.19.0 floor: no Core sends it, staging no longer expires).
+- assertion map: the order goes delivered → `TestFloorWire_ADeliveredWithLandingSentIsTheOrdersAlone`; the expiry is stored → nothing (no writer). An old row's value still read → the store's order round-trip test.
+
+### DEAD — `TestHandleDeliveredWithExpiry_MissingOrder`
+- test: `TestHandleDeliveredWithExpiry_MissingOrder` · pkg `shingoedge/orders` · run `-run '^TestHandleDeliveredWithExpiry_MissingOrder$'` · `shingo-edge/orders/manager_db_test.go` @ `6bd55616` · tags `none`
+- code: DEAD (`HandleDeliveredWithExpiry` is deleted with the fields it carried).
+- assertion map: an unknown order is an error → `TestHandleDeliveredNotice_MissingOrder`, the same assertion on the wire's handler.
+
+### DEAD — `TestPinH7_AnOldEdgeGetsTodaysWireAddressed`
+- test: `TestPinH7_AnOldEdgeGetsTodaysWireAddressed` · pkg `shingocore/service` · run `-run '^TestPinH7_AnOldEdgeGetsTodaysWireAddressed$'` · `shingo-core/service/carrier_landing_pending_docker_test.go` @ `6bd55616` · tags `docker`
+- code: DEAD (`legacyBound`, the Bound for an Edge below the landing's schema, is deleted at the v0.19.0 floor).
+- assertion map: one message, to the claiming station, addressed, for a set-down → `TestPinH3_TheRegisteredSchemaDoesNotDecideTheLanding`, the message now the landing; no Bound on a final drop → the same test (one landing).
+
+### DEAD — `TestPinD19_AnOldEdgeAmongSeveralGetsItsBoundAddressed`
+- test: `TestPinD19_AnOldEdgeAmongSeveralGetsItsBoundAddressed` · pkg `shingocore/service` · run `-run '^TestPinD19_AnOldEdgeAmongSeveralGetsItsBoundAddressed$'` · `shingo-core/service/carrier_landing_pending_docker_test.go` @ `6bd55616` · tags `docker`
+- code: DEAD (the same arm).
+- assertion map: each Edge of the last arm is told, addressed, once → `TestPinD19_EveryEdgeOnTheLastArmGetsTheLanding`, both by the landing.
+
 ### DEAD — `TestDispatcher_IncompleteFakeDoesNotSatisfy`
 - test: `TestDispatcher_IncompleteFakeDoesNotSatisfy` · pkg `shingocore/messaging` · run `-run '^TestDispatcher_IncompleteFakeDoesNotSatisfy$'` · `shingo-core/messaging/dispatcher_test.go:188` @ `d2686a1d` · tags `none`
 - code: DEAD (it asked whether a struct with no methods implements a seven-method interface, which no tree that compiles can answer yes to)

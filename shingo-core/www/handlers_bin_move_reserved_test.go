@@ -40,9 +40,9 @@ func claimForRobot(t *testing.T, db *store.DB, orderID, binID int64) {
 
 // TestBinMove_TakesABinAnotherOrderOnlyReserved: the operator's move goes, the
 // holder's promise is gone, and the take is on the holder's history naming the
-// move. The door then runs a scan pass (engine/bin_move.go), which re-asks the
-// holder at once: with no other bin of its part here it waits, alive, under the
-// finder's own sentence, not the take's.
+// move. The door then triggers a scan pass (engine/bin_move.go), which re-asks
+// the holder a moment later: with no other bin of its part here it waits, alive,
+// under the finder's own sentence, not the take's.
 //
 // Converted (post-review C3): this asserted the holder still waiting with the
 // bin-taken cause after the move, which pinned that nothing re-asked it until

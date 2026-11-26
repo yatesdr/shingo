@@ -34,10 +34,12 @@ func TestDelivered_RecordsWhatCoreSaysTheCarrierIs(t *testing.T) {
 
 	// Core says the carrier that landed is a DIFFERENT part from the one this
 	// node's claim names. That disagreement is the entire subject.
-	bid, uop := binID, 250
+	bid := binID
 	resident := "PART-RESIDENT"
+	eng.HandleBinLanded(protocol.BinLanded{BinID: bid, CoreNodeName: node.CoreNodeName, Count: 250, Epoch: 4,
+		PayloadCode: resident, PayloadKnown: true, OrderUUID: uuid, PlacedSeq: 1})
 	testutil.MustNoErr(t,
-		eng.orderMgr.HandleDeliveredWithExpiry(uuid, "delivery", nil, &bid, &uop, &resident, 4, node.CoreNodeName, ""),
+		eng.orderMgr.HandleDeliveredNotice(&protocol.OrderDelivered{OrderUUID: uuid, BinID: &bid, DeliveryNode: node.CoreNodeName}),
 		"handle delivered")
 
 	rt, err := db.GetProcessNodeRuntime(nodeID)
@@ -49,9 +51,10 @@ func TestDelivered_RecordsWhatCoreSaysTheCarrierIs(t *testing.T) {
 	}
 }
 
-// An older Core sends no payload. Recording a blank is right — a stale identity
-// held over would be a confident wrong answer about the carrier that just
-// arrived, and the readers of this field fail open on an empty one.
+// A landing that names no payload, under no order of this Edge's. Recording a
+// blank is right — a stale identity held over would be a confident wrong
+// answer about the carrier that just arrived, and the readers of this field
+// fail open on an empty one.
 func TestDelivered_NoPayloadFromCoreLeavesNoStaleIdentity(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
@@ -70,9 +73,10 @@ func TestDelivered_NoPayloadFromCoreLeavesNoStaleIdentity(t *testing.T) {
 	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusInTransit)), "set in_transit")
 
 	eng := testEngineWithOrderBridge(t, db)
-	bid, uop := int64(708), 100
+	bid := int64(708)
+	eng.HandleBinLanded(landing(node.CoreNodeName, bid, 4, 100, "", 1))
 	testutil.MustNoErr(t,
-		eng.orderMgr.HandleDeliveredWithExpiry(uuid, "delivery", nil, &bid, &uop, nil, 4, node.CoreNodeName, ""),
+		eng.orderMgr.HandleDeliveredNotice(&protocol.OrderDelivered{OrderUUID: uuid, BinID: &bid, DeliveryNode: node.CoreNodeName}),
 		"handle delivered")
 
 	rt, err := db.GetProcessNodeRuntime(nodeID)

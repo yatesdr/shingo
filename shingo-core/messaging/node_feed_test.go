@@ -39,7 +39,7 @@ func heartbeatWith(svc *CoreDataService, resp *feedsPinResponder, feeds map[stri
 // else was sent while it was handled.
 func heartbeatFrom(svc *CoreDataService, resp *feedsPinResponder, station string, feeds map[string]string) (*protocol.EdgeHeartbeatAck, []feedsPinEvent) {
 	before := len(resp.events)
-	svc.HandleEdgeHeartbeat(feedsPinEnv(station), &protocol.EdgeHeartbeat{StationID: station, Feeds: feeds})
+	svc.HandleEdgeHeartbeat(feedsPinEnv(station), &protocol.EdgeHeartbeat{Feeds: feeds})
 	var ack *protocol.EdgeHeartbeatAck
 	var sends []feedsPinEvent
 	for _, e := range resp.events[before:] {

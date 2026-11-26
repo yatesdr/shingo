@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"shingo/protocol"
@@ -274,10 +275,7 @@ func (e *Engine) startDispatch() *dispatch.DefaultResolver {
 // startBootScan scans, on its own goroutine, the orders queued before a restart,
 // and closes bootScanned when the scan has finished.
 func (e *Engine) startBootScan() {
-	e.loops.spawn(func() {
-		e.fulfillment.RunOnce()
-		close(e.bootScanned)
-	})
+	e.fulfillment.StartBootScan(func() { close(e.bootScanned) })
 }
 
 func newCMSPoster(cfg *config.Config, db *store.DB, logFn func(string, ...any)) *poster.Poster {
@@ -433,13 +431,22 @@ func (e *Engine) stopBounded(limit time.Duration) {
 	e.logFn("engine: stopped")
 }
 
-// stopAndWait stops each subsystem and waits for what it had running. No wait
-// here has a limit of its own to rely on: stopBounded's covers them all.
+// stopAndWait stops each subsystem and waits for what it had running, after
+// stopChan has closed (every loop ends and none starts another turn), in this
+// order:
+//
+//  1. The work in hand that reads the database is joined, all of it at once
+//     under one bound (joinStopped). Stop holds no lock while it waits, so
+//     whatever waits for the scan lock gets it when the running pass ends at
+//     its next order boundary.
+//  2. The tracker stops, after the joins, so a dispatch made by the order in
+//     hand is still tracked.
+//  3. The engine's tracked group, last.
+//
+// The joins bound themselves; the waits after them do not, and stopBounded's
+// limit covers them all.
 func (e *Engine) stopAndWait() {
-	e.stage2.stop()
-	if e.fulfillment != nil {
-		e.fulfillment.Stop()
-	}
+	e.joinStopped()
 	if e.tracker != nil {
 		e.tracker.Stop()
 	}
@@ -450,6 +457,42 @@ func (e *Engine) stopAndWait() {
 	// (an after-queue item, a scan a subscriber started) finishes here, before
 	// the caller closes the database (Engine.loops).
 	e.loops.stop()
+}
+
+// joinStopped waits, for all of them at once and never past the bound, for the
+// scanner's pass and boot scan, the window pulls in hand and the after-queue's
+// work in hand. The last two wait for the scan lock (their acquires), so they
+// are not waited for ahead of the scanner's stop.
+func (e *Engine) joinStopped() {
+	var joined sync.WaitGroup
+	if e.fulfillment != nil {
+		joined.Go(e.fulfillment.Stop) // bounds itself, by the same limit
+	}
+	joined.Go(func() { e.joinWithin("the window pulls", e.stage2.stop) })
+	if e.after != nil {
+		joined.Go(func() { e.joinWithin("the after-emit queue", e.after.join) })
+	}
+	joined.Wait()
+}
+
+// joinWithin waits for wait to return, or logs that stop gave up on what.
+func (e *Engine) joinWithin(what string, wait func()) {
+	limit := e.stopWait
+	if limit <= 0 {
+		limit = fulfillment.StopJoinLimit
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		wait()
+	}()
+	t := time.NewTimer(limit)
+	defer t.Stop()
+	select {
+	case <-done:
+	case <-t.C:
+		e.logFn("engine: stop gave up waiting for %s after %s; shutting down without it", what, limit)
+	}
 }
 
 // rearmReleasedOrders re-arms, on the fleet's tracker, every open order the

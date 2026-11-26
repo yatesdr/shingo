@@ -485,7 +485,6 @@ type StyleImpact struct {
 	NodeTasks       int `json:"changeover_node_tasks"`
 	StationTasks    int `json:"changeover_station_tasks"`
 	Participants    int `json:"changeover_participants"`
-	Payloads        int `json:"payloads"`
 
 	// ChangeoversFrom is SET NULL, not CASCADE: those changeover rows survive a
 	// hard delete and merely lose the pointer that says what they came from.
@@ -530,22 +529,13 @@ func StyleDeleteImpact(db *sql.DB, styleID int64) (*StyleImpact, error) {
 			WHERE process_changeover_id IN (SELECT id FROM process_changeovers WHERE to_style_id = ?)`},
 		{&imp.Participants, `SELECT count(*) FROM changeover_participants
 			WHERE process_changeover_id IN (SELECT id FROM process_changeovers WHERE to_style_id = ?)`},
-		{&imp.Payloads, `SELECT count(*) FROM payloads WHERE job_style_id = ?`},
 		{&imp.ChangeoversFrom, `SELECT count(*) FROM process_changeovers WHERE from_style_id = ?`},
 	} {
 		if err := db.QueryRow(q.sql, styleID).Scan(q.dst); err != nil {
-			// A table absent on this vintage counts as zero rather than failing
-			// the whole confirmation: refusing to show a dialog because a
-			// table does not exist yet would be worse than showing one
-			// number short.
-			if strings.Contains(err.Error(), "no such table") {
-				continue
-			}
 			return nil, fmt.Errorf("style %d impact: %w", styleID, err)
 		}
 	}
 	imp.TotalDeleted = 1 + imp.Claims + imp.ReportingPoints + imp.Snapshots + imp.HourlyCounts +
-		imp.ChangeoversTo + imp.NodeTasks + imp.StationTasks + imp.Participants +
-		imp.Payloads
+		imp.ChangeoversTo + imp.NodeTasks + imp.StationTasks + imp.Participants
 	return imp, nil
 }

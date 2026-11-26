@@ -55,7 +55,7 @@ func TestDeclaredReleaserEventsAreSubscribed(t *testing.T) {
 		"Dispatcher.EvaluateGroupReleases":   {"wiring_lane_gate.go"},
 		"Dispatcher.RedriveHeldCompoundLegs": {"wiring_lane_gate.go"},
 		"Dispatcher.RedriveVacateOnLift":     {"wiring_lane_gate.go"},
-		"fulfillment.Scanner.RunOnce":        {"wiring.go"},
+		"fulfillment.Scanner.Trigger":        {"wiring.go"},
 		"Dispatcher.AdvanceCompoundOrder":    {"wiring.go"},
 		"Dispatcher.RedriveTableTurns":       {"wiring_vendor_status.go", "engine_background.go"},
 	}

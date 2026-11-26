@@ -648,18 +648,6 @@ func GetStepsJSON(db *sql.DB, id int64) (string, error) {
 	return s.String, nil
 }
 
-// UpdateStagedExpireAt sets (or clears, when stagedExpireAt is nil) the
-// staged_expire_at timestamp on an order. Times are stored in
-// SQLite-canonical UTC formatting.
-func UpdateStagedExpireAt(db *sql.DB, id int64, stagedExpireAt *time.Time) error {
-	if stagedExpireAt == nil {
-		_, err := db.Exec(`UPDATE orders SET staged_expire_at=NULL, updated_at=datetime('now') WHERE id=?`, id)
-		return err
-	}
-	_, err := db.Exec(`UPDATE orders SET staged_expire_at=?, updated_at=datetime('now') WHERE id=?`, stagedExpireAt.UTC().Format(helpers.TimeLayout), id)
-	return err
-}
-
 // UpdateBinID writes the bin's Core-side ID from the OrderDelivered
 // envelope. PLC tick attribution at consume/produce time looks up
 // the active order's BinID for delta envelope routing. nil clears

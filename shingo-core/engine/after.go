@@ -22,6 +22,10 @@ import (
 // one goroutine waits for itself: Core hears no Edge and starts no order until
 // it is restarted (carry-edge2, RULINGS-carry-and-core-freeze §2).
 //
+// The two count hooks hand their checks here too, for the other side of the
+// same wait: they run on the one inbound reader, and every message of every
+// station waited behind a refill's acquire (ThresholdMonitor.evaluateAfter).
+//
 // So such a subscriber hands its work here, and returns. One goroutine runs the
 // work in the order it was handed, after the emitter has gone on; when the
 // emitter held the scan lock, the work waits for it like any caller. Handing
@@ -38,12 +42,23 @@ type afterQueue struct {
 	wake  chan struct{}
 	logFn func(string, ...any)
 
+	started atomic.Bool
+	ended   chan struct{} // closed when run returns
+
 	turnover atomic.Pointer[liveness.Loop]
 	depth    atomic.Int64
 }
 
 func newAfterQueue(logFn func(string, ...any)) *afterQueue {
-	return &afterQueue{wake: make(chan struct{}, 1), logFn: logFn}
+	return &afterQueue{wake: make(chan struct{}, 1), ended: make(chan struct{}), logFn: logFn}
+}
+
+// join waits, after stop has closed, for the work in hand: run starts no more
+// (TestAfterQueue_StopWaitsForTheWorkInHand). A queue never run returns at once.
+func (q *afterQueue) join() {
+	if q.started.Load() {
+		<-q.ended
+	}
 }
 
 // later hands fn to the queue's goroutine.
@@ -58,19 +73,23 @@ func (q *afterQueue) later(fn func()) {
 	}
 }
 
-// run serves the queue until stop closes. Work still queued at stop is dropped;
-// the engine is going down. Four kinds are handed here (every later call:
-// wiring.go and wiring_lane_gate.go); what the next engine does about each:
+// run serves the queue until stop closes. The work in hand then finishes
+// (Engine.Stop joins it) and work still queued is dropped; the engine is going
+// down. Four kinds are handed here (every later call: wiring.go,
+// wiring_lane_gate.go and ThresholdMonitor.evaluateAfter); what the next
+// engine does about each:
 //   - a resumed parent's acquire (resumeAcquire): the parent is left
 //     `pending`, which the restart's own write has told its station; the boot
 //     scan (startBootScan) asks it, and the write where it lands tells the
 //     station. PIN: TestResume_AnAcquireDroppedAtStopIsAskedAndToldByTheNextEngine;
-//   - a threshold recheck (BinUpdated): the monitor's startup sweep evaluates
-//     every binding;
+//   - a threshold recheck (BinUpdated, or a count's: its message's offset is
+//     committed by then): the monitor's startup sweep evaluates every binding;
 //   - a swap request's contradiction note: lost; it is a log line and a chip;
 //   - a home clear's re-run (RerunClearsFor): the lane liveness floor's 60 s
 //     tick runs it again (dispatch sweepVacateWaiters).
 func (q *afterQueue) run(stop <-chan struct{}) {
+	q.started.Store(true)
+	defer close(q.ended)
 	for {
 		select {
 		case <-stop:
@@ -78,6 +97,8 @@ func (q *afterQueue) run(stop <-chan struct{}) {
 		case <-q.wake:
 		}
 		for {
+			// Read before each piece: a join that found the queue not yet
+			// started returned at once, and stop had closed before it looked.
 			select {
 			case <-stop:
 				return

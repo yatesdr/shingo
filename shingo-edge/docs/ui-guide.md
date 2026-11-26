@@ -235,9 +235,10 @@ Opening a process gives two tabs, Styles and Settings, with Setup before them un
   orders.
 - **Settings**: one page with one Save, the full width, its sections down the left (a dot on one that needs
   attention), each a card, grouped by what it is about. Health first, while it has items. **The line**: Line
-  (name, description, group), Parts, Positions and routing (the same set pick as Add process, each screen
-  under it with Edit and Open and a chip for each position it holds, the positions on no screen with Put them on
-  <screen> for each screen, and its loader windows; it says in one line that
+  (name, description, group), Parts, Positions and routing (each screen first, as an **Operator screen** row:
+  its name with **Rename** (its name and note) and **Open the screen** beside it and a chip for each position
+  it holds; then the positions on no screen with Put them on <screen> for each screen; then the same set pick
+  as Add process, and its loader windows; it says in one line that
   operators are offered these names, never the plant). A name in Inbound, Staging or Outbound is a place this
   process may route material through; there is nothing to switch on, since a name in the list is set up. A recipe
   follows the one name in a role; with several, it keeps the one it was saved with. Taking one out warns what it
@@ -250,7 +251,8 @@ Opening a process gives two tabs, Styles and Settings, with Setup before them un
   switched it; whether the station shows it), Quality hold (the containment destination), Light curtain
   (positions where a release waits for the curtain). **Danger**: delete the process. On/off settings are switches with what they mean beside them. A line has one screen: **+ Add a
   screen** shows only on a line with none, and takes its positions. A loader's or unloader's process, whose
-  board Core runs, has Settings only: Line, Screens and positions, a pointer to Core, and Danger. Its screens' positions and
+  board Core runs, has Settings only: Line, Screens and positions, a pointer to Core, and Danger. Each screen is
+  the same **Operator screen** row a line draws (**Rename**, **Open the screen**, its positions as chips). Its screens' positions and
   any on no screen are listed, not picked; positions on no screen go onto a screen with **Put them on <screen>**, or with
   **+ Add a screen** when it has none. Its board draws the screen's positions, not the loader's windows. The Edge keeps
   them itself, by the Edge Core names for the loader under Loaders: one line per loader says **Core's pick: this Edge**,

@@ -11,8 +11,8 @@
 # Search for the tag to read one section whole.
 #
 #   [demo]      THE DEMO LOOP. PRESS-1/2 make panels into SYN_MARKET, WELD-1..5 eat them
-#               and the loader-fed components, UNLOADER-A drains ASSY into the press
-#               empties kanban, the level keeper tops it up. All four swap modes, a
+#               and the loader-fed components, UNLOADER-A drains ASSY back into the
+#               market, the level keeper feeds the press empties. All four swap modes, a
 #               multi-window, two single-window and a dedicated-positions loader. Ticks
 #               on EDGE 1 (edge1.line1).
 #   [multi-cart] Not a block of its own: the demo's PRESS-1 (two_robot_press_index, R2
@@ -67,12 +67,13 @@
 #   simcalc -plant plants/master.yaml \
 #     -edge shingo-edge/shingoedge.dev.yaml,shingo-edge/shingoedge.edge2.yaml [-carriers -run 400m]
 #
-# (make dev-rates / dev-carriers.) Every pool, kanban and family holds the run; the
-# [demo] press-empties kanban is seeded to its family pools for it (its zone says
-# how). Two [demo] findings stand, both demo-sim's and both nameplate: PANEL-A and
-# PANEL-B STARVE, and SYN_MARKET shows a rate deficit, because a weld's effective draw
-# is set by its swap cadence, about a third of nameplate (shingoedge.dev.yaml's
-# PRESS-1 block), and the measured tick rates are not retuned to the model.
+# (make dev-rates / dev-carriers.) -carriers passes: every pool, kanban and family
+# holds the run, each floor by carrier type; the [demo] press-empties kanban is
+# seeded to its family pools for it
+# (its zone says how). One [demo] finding stands, demo-sim's and nameplate: the rate
+# check's PANEL-A and PANEL-B STARVE, because a weld's effective draw is set by its
+# swap cadence, about a third of nameplate (shingoedge.dev.yaml's PRESS-1 block),
+# and the measured tick rates are not retuned to the model.
 # plants/README.md has the figures.
 
 station_uid: edge1.line1
@@ -276,12 +277,12 @@ zones:
   # THE KANBAN LOOP (MG2-0) — the empty side of the same circle:
   #   SYN_PRESS_EMPTIES ──(empties)──→ PRESS-1, PRESS-2 ──(fulls)──→ SYN_MARKET
   #           ↑                                                          │
-  #           ├──────── UNLOADER-A pushes drained STANDARD carriers ──────┘
-  #           └──────── the level keeper covers the rest, from SYN_MARKET
+  #           └──────── the level keeper, and nothing else ──────────────┘
   #
-  #   4 STANDARD + 2 STANDARD-SM across 8 positions. The SM half has no direct
-  #   return path on purpose: it is refilled by the keeper alone, so a scenario
-  #   that breaks the keeper shows on one type while the other keeps running.
+  #   4 STANDARD + 2 STANDARD-SM across 12 positions. Neither half has a direct
+  #   return path: the welds' spent panel carriers go to SYN_MARKET and so do
+  #   UNLOADER-A's drained ASSY carriers, where ASSY drew them, and the keeper
+  #   brings back one for each the presses send out.
   #   PRESS-1 can change over to PANEL-C, which rides STANDARD-SM — that is how a
   #   changeover changes WHICH TYPE the group is asked for.
   #   PLK_LOADER (BRKT, multi-window) ─┐
@@ -319,7 +320,8 @@ zones:
     # whole group: a robot parked at Lane_05's own mark had already committed to
     # Lane_05 before anybody asked whether Lane_05 was the right answer.
     #
-    # FIFTEEN, one per lane, and the count is deliberate for this migration
+    # FIFTEEN, one per lane when they moved here (Lane_21/22 came later, for
+    # carts, not for waiting room), and the count is deliberate for this migration
     # rather than a model of anything. It preserves the fixture's total waiting
     # capacity so a run here stays comparable to the per-lane runs before it —
     # the sim's position gate treats a wait point as an exclusive place (one
@@ -358,8 +360,8 @@ zones:
   # so it doesn't need deep buffer — 3 lanes was oversized. Freed nodes go to the tight markets.
       # -- finished-goods ASSY (folded from SYN_SM_FG into SYN_MARKET) --
       - {name: Lane_08, slots: [{name: SMN_022, depth: 1}, {name: SMN_023, depth: 2}, {name: SMN_024, depth: 3}]}
-  # Empty-carrier segment. Empties cycle unloader→here→press/loader. FIVE lanes
-  # (Lane_11-14 plus Lane_19's headroom), all depth-3, and they store LKND like every other
+  # Empty-carrier segment. Empties cycle unloader→here→press/loader. SEVEN lanes
+  # (Lane_11-14, Lane_19's headroom, Lane_21-22), all depth-3, and they store LKND like every other
   # lane in this zone -- this said "4 lanes" and "DPTH store (fill shallow-first)", both
   # left over from the standalone SYN_MT_Return zone that was folded into SYN_MARKET
   # (2026-07-12). The store algorithm is a property of the GROUP, and SYN_MARKET's is LKND,
@@ -372,6 +374,14 @@ zones:
       - {name: Lane_14, slots: [{name: UTN_010, depth: 1}, {name: UTN_011, depth: 2}, {name: UTN_012, depth: 3}]}
       # Lane_19 = extra empty headroom so returned empties don't leave air bubbles behind.
       - {name: Lane_19, slots: [{name: UTN_013, depth: 1}, {name: UTN_014, depth: 2}, {name: UTN_015, depth: 3}]}
+      # Lane_21/22 = four more empty STANDARD (2026-11-22), in lanes of their own so no
+      # headroom lane is eaten. SYN_MARKET's STANDARD floor is 16: 1.00 a minute over the
+      # 10 minutes simcalc allows, and the 6 stations drawing STANDARD here (the two ASSY
+      # welds and the BRKT, CLIP and STUD loaders). It stood 12, and its 5 STANDARD-SM
+      # are no empty to a STANDARD station (simcalc -carriers, SHORT BY;
+      # TestMasterCarriers_MarketStandardFloorOverABand). 16 on 16: no margin.
+      - {name: Lane_21, slots: [{name: UTN_016, depth: 1}, {name: UTN_017, depth: 2}, {name: UTN_018, depth: 3}]}
+      - {name: Lane_22, slots: [{name: UTN_019, depth: 1}, {name: UTN_020, depth: 2}, {name: UTN_021, depth: 3}]}
 
   # ── A lineside kanban, and the only flat zone here. ──
   #
@@ -384,9 +394,8 @@ zones:
   # front of it.
   #
   # LIVE AS OF MG2-0. Both presses source their empties from here
-  # (inbound_source below), the unloader pushes its drained carriers back in
-  # (outbound_destination), and the level keeper refills whatever that leaves
-  # short.
+  # (inbound_source below), and the level keeper is the only thing that refills
+  # it (TestSeedDemo_PressesDrawFromTheGroupAndOnlyTheKeeperRefillsIt).
   #
   # SIZED TO ITS POOLS (the master, 2026-11-06). A family's pool is the carts its
   # loop owns: its level plus, for each supported press, the most positions any
@@ -658,15 +667,23 @@ zones:
   #
   # THE POOL. Minimum is the mix plus, summed over the supported processes, each one's most
   # positions in the family: 6 + 5x4 = 26 of 45x48, and 2 + 5x4 = 22 of 32x30. A family must fit
-  # every press running it at once, so the pool is the sum, and slots are at least the pool.
+  # every press running it at once, so the pool is at least the sum, and slots at least the pool.
   #
-  #   45x48 carts, 26                               small  big  totes
+  # 45x48 IS TEN OVER ITS MINIMUM, THE CARTS EXPECTED AT THE WINDOWS ([kanban]'s AT POOL =
+  # MINIMUM rule): every P5 part rides small, ten positions draw 1.00 cart a minute and fill in
+  # phase, and a kanban with no source stands demand x transit itself: 10 over the 10 minutes
+  # simcalc allows. Do not cut it back to the minimum: at 26 two carts went round, and the
+  # presses starved for an empty (2026-11-22; simcalc -carriers fails it, UNDER ITS FLOOR;
+  # TestMasterCarriers_P5FloorOverABand). It would hold at fewer only if the presses drew less.
+  #
+  #   45x48 carts, 36                               small  big  totes
   #     the five presses' 20 positions                 20               20
-  #     P5-KANBAN, P5B_001..006                         2    2    2      6
+  #     P5-KANBAN, P5B_001..016                        12    2    2     16
   #   32x30 carts, 22: all in P5-KANBAN, P5B_027..048
   #
-  # 26 + 22 = 48 slots, and 48 carts. A second press changing onto a type in the same cycle waits
-  # on the re-types through one unloader, which is what sharing it means.
+  # 36 + 22 = 58 slots (45x48 on P5B_001..026 and P5B_049..058), and 58 carts. A second press
+  # changing onto a type in the same cycle waits on the re-types through one unloader, which is
+  # what sharing it means.
   #
   - name: P5-KANBAN
     retrieve_algorithm: FIFO
@@ -720,6 +737,16 @@ zones:
       - {name: P5B_046, depth: 1, admits: [CART-32]}
       - {name: P5B_047, depth: 1, admits: [CART-32]}
       - {name: P5B_048, depth: 1, admits: [CART-32]}
+      - {name: P5B_049, depth: 1, admits: [45x48]}
+      - {name: P5B_050, depth: 1, admits: [45x48]}
+      - {name: P5B_051, depth: 1, admits: [45x48]}
+      - {name: P5B_052, depth: 1, admits: [45x48]}
+      - {name: P5B_053, depth: 1, admits: [45x48]}
+      - {name: P5B_054, depth: 1, admits: [45x48]}
+      - {name: P5B_055, depth: 1, admits: [45x48]}
+      - {name: P5B_056, depth: 1, admits: [45x48]}
+      - {name: P5B_057, depth: 1, admits: [45x48]}
+      - {name: P5B_058, depth: 1, admits: [45x48]}
   - name: P5-UNLOAD
     retrieve_algorithm: FIFO
     store_algorithm: LKND
@@ -1185,7 +1212,7 @@ stations:
 # Bins. Source lanes seeded FULL back-to-front (buried bins exist from t0). Produce nodes
 # (incl. A/B parked side + press-index back) seeded with EMPTY active carriers. Consume
 # nodes seeded ABOVE reorder so flow establishes before the first reorder. Empties pool in
-# SYN_MARKET's empties lanes (Lane_11-14, Lane_19) -- there is no SYN_MT_Return zone in
+# SYN_MARKET's empties lanes (Lane_11-14, Lane_19, Lane_21-22) -- there is no SYN_MT_Return zone in
 # this file. Bin LABELS are a separate namespace from node names.
 bins:
 
@@ -1298,6 +1325,12 @@ bins:
   # making silently.
   - {name: BIN-MT-16, slot: SMN_035, bin_type: STANDARD-SM}
   - {name: BIN-MT-17, slot: SMN_036, bin_type: STANDARD-SM}
+  # FOUR MORE STANDARD, in lanes added for them (Lane_21/22's note says why), so the
+  # trade above is not made: Lane_21 full, Lane_22 packed from the back.
+  - {name: BIN-MT-18, slot: UTN_016}
+  - {name: BIN-MT-19, slot: UTN_017}
+  - {name: BIN-MT-20, slot: UTN_018}
+  - {name: BIN-MT-21, slot: UTN_021}
 
   # ══ [corridor] SYN_STAMP and SYN_COMP ════════════════════════════════════════════════════════
   # The corridor at birth: lane-stress-packed's placements, slot for slot, ages kept.
@@ -1404,6 +1437,17 @@ bins:
   - {name: P5-K-04, slot: P5B_004, bin_type: BIG-45}
   - {name: P5-K-05, slot: P5B_005, bin_type: TOTES-45}
   - {name: P5-K-06, slot: P5B_006, bin_type: TOTES-45}
+  # The ten spares over the minimum: the carts expected at the windows.
+  - {name: P5-K-07, slot: P5B_007, bin_type: SMALL-45}
+  - {name: P5-K-08, slot: P5B_008, bin_type: SMALL-45}
+  - {name: P5-K-09, slot: P5B_009, bin_type: SMALL-45}
+  - {name: P5-K-10, slot: P5B_010, bin_type: SMALL-45}
+  - {name: P5-K-11, slot: P5B_011, bin_type: SMALL-45}
+  - {name: P5-K-12, slot: P5B_012, bin_type: SMALL-45}
+  - {name: P5-K-13, slot: P5B_013, bin_type: SMALL-45}
+  - {name: P5-K-14, slot: P5B_014, bin_type: SMALL-45}
+  - {name: P5-K-15, slot: P5B_015, bin_type: SMALL-45}
+  - {name: P5-K-16, slot: P5B_016, bin_type: SMALL-45}
   - {name: P5-K-27, slot: P5B_027, bin_type: CART-32}
   - {name: P5-K-28, slot: P5B_028, bin_type: CART-32}
   - {name: P5-K-29, slot: P5B_029, bin_type: CART-32}
@@ -2186,20 +2230,17 @@ claims:
 
   # ── UNLOADER-A (manual_swap: pull full ASSY, return empty) ──
   #
-  # OUTBOUND INTO THE KANBAN (MG2-0). The drained carrier goes straight
-  # to the lineside kanban rather than back to the market, which closes the loop
-  # the keeper sits in: presses draw the group down, the unloader pushes some of
-  # it back, and the keeper covers whatever difference is left.
+  # OUTBOUND TO THE MARKET (2026-11-22), WHERE ASSY DREW THE CARRIER. Do not point
+  # it at SYN_PRESS_EMPTIES. It did from MG2-0: both welds make ASSY, 20 to a
+  # carrier, and only PRESS-1 takes STANDARD from that kanban, 30 to a carrier,
+  # so three came in for one drawn. A kanban has no overflow: STANDARD took the
+  # spare positions, the keeper could land no STANDARD-SM, and PANEL-B stopped.
+  # simcalc -carriers fails that edge (RATE SURPLUS;
+  # TestMasterCarriers_EachRepairIsNeededOnItsOwn). It would hold again only if
+  # the presses drew STANDARD as fast as ASSY frees it.
   #
-  # It refills the STANDARD half only — ASSY rides STANDARD — and that asymmetry
-  # is wanted. The STANDARD-SM half has NO direct return path, so it is refilled
-  # by the keeper alone, and a scenario that breaks the keeper shows up on one
-  # type while the other keeps running. A loop where both halves self-heal would
-  # hide exactly the failure the campaign is looking for.
-  #
-  # Queue-on-full applies here like everywhere: a full group parks the push, and
-  # nothing cancels it. The two spare positions are what keep that from being the
-  # normal case.
+  # The push-into-kanban path is PRESS-KANBAN's and P5-KANBAN's
+  # (TestKanbanRig_PressAndP5KanbansKeepThePushIn).
   - core_node: FGN_001
     style: UNLOADER-A-RUN
     role: consume
@@ -2209,7 +2250,7 @@ claims:
     reorder_point: 0
     auto_reorder: false
     inbound_source: SYN_MARKET
-    outbound_destination: SYN_PRESS_EMPTIES
+    outbound_destination: SYN_MARKET
     auto_push: true
 
   # UNLOADER-B IS GONE. It drained PANEL-A, which WELD-1 consumes, and it existed
@@ -2894,11 +2935,12 @@ kanbans:
     supports: [KW-WELD]
 
   # ══ [kanban5] one kanban over five presses ═══════════════════════════════════════════════════
-  # One kanban over all five presses: mix once, pool the summed minimum, cover from the claims.
+  # One kanban over all five presses: mix once, cover from the claims, 45x48 ten over the summed
+  # minimum (the zone's note says why), 32x30 at it.
   - group: P5-KANBAN
     station: edge1.line1
     strict: false
-    pools: {45x48: 26, CART-32: 22}
+    pools: {45x48: 36, CART-32: 22}
     levels:
       - {bin_type: SMALL-45, want: 2}
       - {bin_type: BIG-45, want: 2}

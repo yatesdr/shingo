@@ -165,7 +165,7 @@ func TestToolingFirstChangeoverGivesEveryPositionAnOrder(t *testing.T) {
 // TestToolingPositionsMaterializeOnceIsIdempotent guards the obvious way to get the
 // fix wrong: creating the row on every plan would duplicate process_nodes, and
 // this schema has been through one duplicate-node cleanup already
-// (collapseDuplicateProcessNodes) after PLC ticks were counted three times.
+// (the retired chain's boot collapse) after PLC ticks were counted three times.
 func TestToolingPositionsMaterializeOnceIsIdempotent(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)

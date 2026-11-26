@@ -283,7 +283,7 @@ func scDeliver(t *testing.T, eng *Engine, db *store.DB, o *storeorders.Order) {
 	t.Helper()
 	testutil.MustNoErr(t, db.UpdateOrderStatus(o.ID, string(protocol.StatusDispatched)), "stamp dispatched")
 	bin := int64(77)
-	testutil.MustNoErr(t, eng.orderMgr.HandleDeliveredWithExpiry(o.UUID, "delivered", nil, &bin, nil, nil, 0, o.DeliveryNode, ""),
+	testutil.MustNoErr(t, eng.orderMgr.HandleDeliveredNotice(&protocol.OrderDelivered{OrderUUID: o.UUID, BinID: &bin, DeliveryNode: o.DeliveryNode}),
 		"deliver order "+o.UUID)
 }
 

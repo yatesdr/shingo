@@ -1,11 +1,11 @@
-// handler_bin_landed.go — the landing (Lane H, H.1, H.4, H.5, H.7).
+// handler_bin_landed.go — the landing (Lane H, H.1, H.4, H.5).
 //
 // Core announces that a carrier came to rest at a node on
 // transit.bin_landed, as an outbox row in the transaction that moved it
 // (shingo-core service.BinService.announceLanding), addressed to the station
 // that binds there. This is the Edge's ONE door for binding a carrier Core
-// placed: order.delivered closes the order and binds nothing (H.5), and the
-// Bound adjustment is an older Core's (H.7), routed through the same verb.
+// placed: order.delivered closes the order and binds nothing (H.5), and an
+// adjustment is never a landing.
 
 package engine
 
@@ -187,15 +187,13 @@ func (e *Engine) bindEndingHold(node *processes.Node, seat *processes.RuntimeSta
 // THE SETTLE IS LOAD-BEARING. A bind here is the record that a bin is on the
 // cell, which a leg that has already left the cell's nodes waits on; whichever
 // of the pickup and the placement lands second completes the departure
-// (leg_departure.go). The Bound arm fired it; the landing now does.
+// (leg_departure.go). The landing fires it.
 //
 // by is strangerBy's answer for the cart: "" when an order of this Edge's
 // delivered it, else the actor of the hold drop the bind writes (D4,
 // bindEndingHold).
 //
-// Callers: HandleBinLanded (stamped), and for one release an older Core's
-// Bound (bindAdjustmentFromCore) and delivered (landFromOldCore), unstamped
-// (H.7).
+// Caller: HandleBinLanded (stamped).
 func (e *Engine) landCarrier(node *processes.Node, l processes.LandingBind, carrier domain.LinesideCarrier,
 	src domain.CarrierSource, why, by string) bool {
 	sink := e.deltaSink()

@@ -191,10 +191,9 @@ func (s *CoreDataService) ephemeralTopicName() string {
 	return s.ephemeralTopic()
 }
 
-// asksFor is the ack's Asks: nil for an Edge that sends no Feeds (an older
-// binary, which would not read it) or when none are registered.
-func (s *CoreDataService) asksFor(p *protocol.EdgeHeartbeat) []string {
-	if p.Feeds == nil || s.askKinds == nil {
+// asksFor is the ack's Asks: nil when none are registered.
+func (s *CoreDataService) asksFor() []string {
+	if s.askKinds == nil {
 		return nil
 	}
 	if kinds := s.askKinds(); len(kinds) > 0 {
@@ -356,9 +355,9 @@ func (s *CoreDataService) HandleBinUOPDelta(env *protocol.Envelope, d *protocol.
 		s.binCountEmitter(d.BinID)
 	}
 
-	// Notify the UOP-threshold monitor, which re-reads the payload's
-	// authoritative total (the just-applied write included) and checks its
-	// thresholds. An unmonitored payload stops at the bindings lookup.
+	// Notify the UOP-threshold monitor, which hands the check off the reader:
+	// it re-reads the payload's authoritative total (the just-applied write
+	// included) a moment later and checks its thresholds.
 	if s.thresholdMonitor != nil && d.PayloadCode != "" {
 		s.thresholdMonitor.OnBinUOPDelta(d.PayloadCode, d.Delta)
 	}
@@ -430,16 +429,16 @@ func (s *CoreDataService) HandleLinesideBucketLevel(env *protocol.Envelope, l *p
 		station, l.CoreNodeName, l.PayloadCode, l.State, l.SequenceID, l.Qty, l.Drained)
 
 	// A level changes on-hand (an active pile counts), so the payload is
-	// re-evaluated. A stranded level changes nothing the count reads; its
-	// evaluation is one bindings lookup and keeps this path branch-free.
+	// re-evaluated, off the reader. A stranded level changes nothing the count
+	// reads; its evaluation is one bindings lookup, later, and keeps this path
+	// branch-free.
 	if s.thresholdMonitor != nil {
 		s.thresholdMonitor.OnBucketApplied(l.PayloadCode)
 	}
 }
 
 func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol.EdgeRegister) {
-	// The station is the envelope's (HandleEdgeHeartbeat): the body's station_id,
-	// which an Edge still sends for an older Core, is not read.
+	// The station is the envelope's (HandleEdgeHeartbeat): the body names none.
 	uid := env.Src.Station
 	log.Printf("core_handler: edge registered: uid=%s (hostname=%s, instance=%s, version=%s, schema_version=%d)",
 		uid, p.Hostname, p.Instance, p.Version, p.SchemaVersion)
@@ -607,13 +606,19 @@ func edgeCellsOf(catalog []protocol.CellCatalogEntry) []store.EdgeCell {
 // the difference is that the request is now the only outcome.
 //
 // THE EDGE'S CLOCK OFFSET rides the same UPDATE: the envelope's ts (the Edge's
-// clock when it built the heartbeat) minus Core's clock on receipt. The
-// broker's delay is in it, reading as the Edge being behind by that much; the
-// Edge's /status shows the mirror reading from the ack. A heartbeat with no ts
+// clock when it built the heartbeat) minus Core's clock when this handler runs.
+// So every delay between the two is in it, reading as the Edge being behind by
+// that much: the Edge's outbox, the broker, and the wait to be read behind the
+// messages ahead on the one reader. A door or ask ahead waits for the scan
+// lock: the pass running and at most one more, and the doors and acquires
+// ahead of it (TestHeartbeatOffset_CarriesAtMostTwoPassesOfTheScanLock). A pass
+// is not itself bounded: a fleet create runs under that lock. The Edge's
+// /status shows the mirror reading from the ack, which Core stamps when it
+// answers, so that one carries no wait to be read. A heartbeat with no ts
 // leaves the last reading.
 func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protocol.EdgeHeartbeat) {
 	// The station is the envelope's, as it is for every Edge-sent count
-	// (HandleProductionTicks): the body's station_id is not read. env is the
+	// (HandleProductionTicks): the body names none. env is the
 	// router's and never nil.
 	station := env.Src.Station
 	var clockOffsetMS *int64
@@ -633,28 +638,13 @@ func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 		log.Printf("core_handler: update heartbeat for %s: %v — acking without the registry write", station, err)
 	}
 
-	// Feeds: an Edge that names none (nil — an older binary) gets exactly the
-	// ack it always got. A newer one gets Core's digest for every key it named
-	// that Core could read, and the feeds whose digests differ are sent to it.
-	// The ack always carries a map, so the Edge can tell this Core from an
-	// older one.
-	binWatch := s.binWatchFor(station, p)
-	feeds := map[string]string{}
-	if p.Feeds != nil {
-		feeds = s.answerFeeds(station, p.Feeds)
-	}
-	// Claims stay off an ack whose registry write failed: the Edge reads nil
-	// as "Core could not read them" and republishes nothing on the strength
-	// of a database that is failing. The owned map follows the same rule for
-	// every family it reads from the database.
-	//
-	// An Edge that quotes the owned map is answered on it alone, and one that
-	// quotes none on the old fields alone (claimsFor and binWatchFor are nil
-	// for it): never both, as protocol's EdgeHeartbeatAck.Claims says.
-	var claims map[string]string
-	if err == nil {
-		claims = s.claimsFor(station, p)
-	}
+	// Feeds: Core's digest for every key the heartbeat named that Core could
+	// read, and the feeds whose digests differ are sent. The ack always
+	// carries a map.
+	feeds := s.answerFeeds(station, p.Feeds)
+	// The owned map: every family the heartbeat named. The two read from the
+	// database stay off an ack whose registry write failed, so the Edge
+	// republishes nothing on the strength of a database that is failing.
 	var owned map[string]protocol.OwnedAnswer
 	if p.Owned != nil {
 		owned = s.answerOwned(station, p.Owned, err == nil)
@@ -673,9 +663,7 @@ func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 			DisplayName: name,
 			Feeds:       feeds,
 			Owned:       owned,
-			Claims:      claims,
-			BinWatch:    binWatch,
-			Asks:        s.asksFor(p),
+			Asks:        s.asksFor(),
 			// Core's verified topic, afresh on every ack: absent, the Edge
 			// closes its ephemeral reader and writer (protocol/ephemeral.go).
 			EphemeralTopic: s.ephemeralTopicName(),
@@ -861,12 +849,16 @@ func (s *CoreDataService) HandlePlantClaims(env *protocol.Envelope, report *prot
 	if env != nil {
 		station = env.Src.Station
 	}
-	previous, err := s.db.ReplacePlantClaimsFromStation(report.ProcessID, station, styles, claims, report.Positions, report.ConfigGen)
+	replaced, err := s.db.ReplacePlantClaimsFromStation(report.ProcessID, station, styles, claims, report.Positions, report.ConfigGen)
 	if err != nil {
 		log.Printf("core_handler: plant.claims mirror %s: %v", report.ProcessID, err)
 		return
 	}
+	previous := replaced.PreviousStation
 	s.recordClaimsReport(env, report)
+	if replaced.ClaimedNodesMoved {
+		s.claimedNodesMoved(station, previous)
+	}
 	if previous != "" && station != "" && previous != station {
 		log.Printf("core_handler: plant.claims — process %s is published by two stations, %s and now %s; "+
 			"keeping %s's (the last writer). A process belongs to one station: fix the plant spec on one of them",

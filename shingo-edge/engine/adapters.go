@@ -103,17 +103,17 @@ func (e *orderEmitter) EmitOrderCompleted(orderID int64, orderUUID string, order
 	}})
 }
 
-func (e *orderEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binUOP *int, binPayloadCode *string, binEpoch int64, binDestNode, deliveryNode string, landingSent bool) {
+func (e *orderEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64, binDestNode, deliveryNode string, fromNotice bool) {
 	e.bus.Emit(Event{Type: EventOrderDelivered, Payload: OrderDeliveredEvent{
-		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, ProcessNodeID: processNodeID, BinID: binID, BinUOP: binUOP, BinPayloadCode: binPayloadCode, BinEpoch: binEpoch, BinDestNode: binDestNode, DeliveryNode: deliveryNode,
-		LandingSent: landingSent,
+		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, ProcessNodeID: processNodeID, BinID: binID, BinDestNode: binDestNode, DeliveryNode: deliveryNode,
+		FromNotice: fromNotice,
 	}})
 }
 
-func (e *orderEmitter) EmitOrderDeliveredFallback(binID int64, binUOP *int, binPayloadCode *string, binEpoch int64, deliveryNode string, landingSent bool) {
+func (e *orderEmitter) EmitOrderDeliveredFallback(binID int64, deliveryNode string) {
 	e.bus.Emit(Event{Type: EventOrderDelivered, Payload: OrderDeliveredEvent{
-		BinID: &binID, BinUOP: binUOP, BinPayloadCode: binPayloadCode, BinEpoch: binEpoch, DeliveryNode: deliveryNode,
-		LandingSent: landingSent,
+		BinID: &binID, DeliveryNode: deliveryNode,
+		FromNotice: true, // only the notice's handler emits it
 	}})
 }
 

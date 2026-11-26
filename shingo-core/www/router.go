@@ -430,6 +430,7 @@ func NewRouter(eng *engine.Engine, doors *Doors, dbg *debuglog.Logger) (http.Han
 				r.Post("/edges/claim", h.apiEdgeClaim)
 				r.Post("/edges/rename", h.apiEdgeRename)
 				r.Post("/edges/rebind", h.apiEdgeRebind)
+				r.Post("/edges/remove", h.apiEdgeRemove)
 
 				// Node management
 				r.Post("/nodes/bin-types", h.apiSetNodeBinTypes)

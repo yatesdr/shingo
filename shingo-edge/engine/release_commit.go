@@ -302,7 +302,7 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 
 	// The OLD bin's local count follows what Core was told (RELEASE EMPTY →
 	// 0, SEND PARTIAL BACK → the partial). The incoming bin's count arrives on
-	// its OrderDelivered envelope; ticks in between are held and replayed.
+	// its landing; ticks in between are held and replayed.
 	//
 	// A release declaring 0 also marks the bin released-empty in the same
 	// statement: it is not charged afterwards, and ticks past the pile are

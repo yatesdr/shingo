@@ -118,8 +118,7 @@ func hideTable(t *testing.T, db *store.DB, table string) {
 // register request (no request goes out on a row Core could not check).
 //
 // Every heartbeat here has no Feeds field, which is what an older Edge sends.
-// Its ack carries feeds as {} and claims as null (claimsFor is nil for an Edge
-// that does not speak feeds); bin_watch and asks are left off; timezone is
+// Its ack carries feeds as {} and no claims or bin_watch key; timezone is
 // there only when a plant zone is configured; display_name only when the
 // registry write found the station's row (EdgeHeartbeatAck.DisplayName); owned
 // is null, as to every Edge that sends no owned map.
@@ -142,26 +141,26 @@ func TestFeedsPin_HandleEdgeHeartbeat(t *testing.T) {
 		{
 			name: "enrolled station, plant zone configured", enroll: true, plantTZ: "America/Chicago",
 			wantTrace:   []string{ack},
-			wantAckKeys: []string{"claims", "display_name", "feeds", "owned", "server_ts", "station_id", "timezone"}, // feeds={}, claims=null
+			wantAckKeys: []string{"display_name", "feeds", "owned", "server_ts", "station_id", "timezone"}, // feeds={}
 		},
 		{
 			name: "enrolled station, plant zone unset", enroll: true, plantTZ: "",
 			wantTrace:   []string{ack},
-			wantAckKeys: []string{"claims", "display_name", "feeds", "owned", "server_ts", "station_id"},
+			wantAckKeys: []string{"display_name", "feeds", "owned", "server_ts", "station_id"},
 		},
 		{
 			name: "unenrolled station gets the ack and a register request", enroll: false, plantTZ: "America/Chicago",
 			wantTrace:   []string{ack, regReq},
-			wantAckKeys: []string{"claims", "feeds", "owned", "server_ts", "station_id", "timezone"},
+			wantAckKeys: []string{"feeds", "owned", "server_ts", "station_id", "timezone"},
 		},
 		{
 			// Core acks anyway, with only the feed keys it could read (none
-			// for an older Edge) and claims null; still no register request.
+			// for an older Edge); still no register request.
 			// Before the registry-failure ack (see the file header) nothing
 			// was sent at all.
 			name: "registry write fails: ack, no register request", enroll: true, breakRegistry: true, plantTZ: "America/Chicago",
 			wantTrace:   []string{ack},
-			wantAckKeys: []string{"claims", "feeds", "owned", "server_ts", "station_id", "timezone"},
+			wantAckKeys: []string{"feeds", "owned", "server_ts", "station_id", "timezone"},
 		},
 	}
 
@@ -183,7 +182,7 @@ func TestFeedsPin_HandleEdgeHeartbeat(t *testing.T) {
 			pending := int64(4)
 			before := time.Now().UTC().Add(-time.Second)
 			svc.HandleEdgeHeartbeat(feedsPinEnv(st), &protocol.EdgeHeartbeat{
-				StationID: st, Timezone: "America/New_York", TickPending: &pending,
+				Timezone: "America/New_York", TickPending: &pending,
 			})
 			afterCall := time.Now().UTC().Add(time.Second)
 

@@ -330,7 +330,7 @@ func (m *Manager) deliveredFactsIn(order *orders.Order, seed deliveredSeed) {
 // the carrier's facts, then an auto-confirmed order's confirm.
 func (m *Manager) deliveredFollowOns(order *orders.Order, seed deliveredSeed) {
 	m.emitter.EmitOrderDelivered(order.ID, order.UUID, order.OrderType, order.ProcessNodeID, order.BinID,
-		seed.uop, seed.payloadCode, seed.epoch, seed.binDestNode, order.DeliveryNode, seed.landingSent)
+		seed.binDestNode, order.DeliveryNode, seed.fromNotice)
 	if order.AutoConfirm {
 		m.DebugLog.Log("auto-confirm: id=%d uuid=%s qty=%d", order.ID, order.UUID, order.Quantity)
 		if err := m.ConfirmDelivery(order.ID, order.Quantity); err != nil {

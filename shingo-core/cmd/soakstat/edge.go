@@ -59,7 +59,6 @@ const (
 
 var (
 	edgeNotFoundRe = regexp.MustCompile(`uop_adjustment: process node "[^"]*" not found`)
-	edgeBoundRe    = regexp.MustCompile(`uop_adjustment: bound bin \d+ to node `)
 )
 
 // edgeSource is one Edge's database, and its log when one was found.
@@ -158,8 +157,8 @@ type edgeReading struct {
 	wallSpan time.Duration // the same on reported_at
 	gaps     int
 
-	logRead               bool
-	logNotFound, logBound int
+	logRead     bool
+	logNotFound int
 
 	work *edgeWork // [S.6], edge_work.go
 
@@ -208,7 +207,6 @@ func readEdge(src edgeSource) (*edgeReading, error) {
 		}
 		e.logRead = true
 		e.logNotFound = len(edgeNotFoundRe.FindAll(b, -1))
-		e.logBound = len(edgeBoundRe.FindAll(b, -1))
 		logBytes = b
 	}
 	if e.work, err = readEdgeWork(src.dbPath, logBytes); err != nil {
@@ -295,7 +293,7 @@ func decodeLinesideReport(payload []byte) (linesideSample, bool) {
 		json.Unmarshal(data.Body, &rep) != nil || env.Timestamp.IsZero() {
 		return linesideSample{}, false
 	}
-	return linesideSample{at: env.Timestamp, wall: rep.ReportedAt, station: rep.Station, entries: rep.Entries}, true
+	return linesideSample{at: env.Timestamp, wall: rep.ReportedAt, station: env.Src.Station, entries: rep.Entries}, true
 }
 
 // starved is the seat's state in one report.

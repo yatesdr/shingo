@@ -3,6 +3,7 @@
 package messaging
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -146,7 +147,7 @@ func TestContainmentChanged_BroadcastsThenHeartbeatsCompare(t *testing.T) {
 	first := resp.events[0].payload.(*protocol.ContainmentSnapshot)
 
 	resp.events = nil
-	svc.HandleEdgeHeartbeat(feedsPinEnv("edge.a"), &protocol.EdgeHeartbeat{StationID: "edge.a",
+	svc.HandleEdgeHeartbeat(feedsPinEnv("edge.a"), &protocol.EdgeHeartbeat{
 		Feeds: map[string]string{protocol.FeedContainment: first.Digest}})
 	if got := resp.trace(); !reflect.DeepEqual(got, []string{"reply " + protocol.SubjectEdgeHeartbeatAck}) {
 		t.Errorf("edge holding the broadcast: trace = %v, want the ack alone", got)
@@ -156,7 +157,7 @@ func TestContainmentChanged_BroadcastsThenHeartbeatsCompare(t *testing.T) {
 	}
 
 	resp.events = nil
-	svc.HandleEdgeHeartbeat(feedsPinEnv("edge.b"), &protocol.EdgeHeartbeat{StationID: "edge.b",
+	svc.HandleEdgeHeartbeat(feedsPinEnv("edge.b"), &protocol.EdgeHeartbeat{
 		Feeds: map[string]string{protocol.FeedContainment: ""}})
 	if got := resp.trace(); !reflect.DeepEqual(got, []string{
 		"send " + protocol.SubjectContainmentSnapshot + " -> edge.b", "reply " + protocol.SubjectEdgeHeartbeatAck}) &&
@@ -227,5 +228,49 @@ func TestBuildContainmentSnapshot_GoldenDigest(t *testing.T) {
 	testutil.MustNoErr(t, err, "digest zoned")
 	if d != snap.Digest {
 		t.Errorf("same rows in another zone digest %s, want %s", d, snap.Digest)
+	}
+}
+
+// A broadcast is a copy Core sent to every station that quotes the feed: an
+// Edge quoting one while a newer is on its way is converging, and one that
+// took none still flags on its third send.
+func TestContainmentChanged_ABroadcastQuotedBackConverges(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	_, b12 := containmentFeedFixture(t, db)
+	const applying, frozen = "edge.applying", "edge.frozen"
+	for _, st := range []string{applying, frozen} {
+		_, err := db.EnrollEdge(st, "")
+		testutil.MustNoErr(t, err, "enroll "+st)
+	}
+	resp := &feedsPinResponder{}
+	svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
+	n := 0
+	change := func() string {
+		n++
+		_, err := db.DB.Exec(`UPDATE bins SET label = $1 WHERE id = $2`, fmt.Sprintf("CF-BIN-%d", 100+n), b12)
+		testutil.MustNoErr(t, err, "move the held bin's row")
+		resp.events = nil
+		svc.ContainmentChanged()
+		return resp.events[0].payload.(*protocol.ContainmentSnapshot).Digest
+	}
+	beat := func(st, quote string) {
+		svc.HandleEdgeHeartbeat(feedsPinEnv(st), &protocol.EdgeHeartbeat{
+			Feeds: map[string]string{protocol.FeedContainment: quote}})
+	}
+	stuck := change()
+	beat(applying, stuck)
+	beat(frozen, stuck)
+	for i := 0; i < 4; i++ {
+		took := change()
+		change() // broadcast after the heartbeat left
+		beat(applying, took)
+		beat(frozen, stuck)
+	}
+	if got := svc.EdgeFeedFlags(applying); len(got) != 0 {
+		t.Errorf("an Edge applying every broadcast, one in flight at each heartbeat: flags %v, want none", got)
+	}
+	if got := svc.EdgeFeedFlags(frozen); len(got) != 1 {
+		t.Errorf("an Edge that took none: flags %v, want the flag", got)
 	}
 }

@@ -58,7 +58,7 @@ CREATE TABLE line_counters (
 CREATE TABLE style_node_claims (
   id INTEGER PRIMARY KEY AUTOINCREMENT, style_id INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
   core_node_name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'consume', swap_mode TEXT NOT NULL,
-  payload_code TEXT NOT NULL DEFAULT '', uop_capacity INTEGER NOT NULL DEFAULT 0,
+  payload_code TEXT NOT NULL DEFAULT '',
   reorder_point INTEGER NOT NULL DEFAULT 0, auto_reorder INTEGER NOT NULL DEFAULT 1,
   inbound_staging TEXT NOT NULL DEFAULT '', outbound_staging TEXT NOT NULL DEFAULT '',
   inbound_source TEXT NOT NULL DEFAULT '', outbound_destination TEXT NOT NULL DEFAULT '',
@@ -74,10 +74,6 @@ CREATE TABLE style_node_claims (
   changeover_evac_nodes TEXT NOT NULL DEFAULT '',
   changeover_carryover_disposition TEXT NOT NULL DEFAULT 'replace',
   key_route TEXT NOT NULL DEFAULT '', key_task TEXT NOT NULL DEFAULT '',
-  staging_node TEXT NOT NULL DEFAULT '', release_node TEXT NOT NULL DEFAULT '',
-  inbound_source_node TEXT NOT NULL DEFAULT '', inbound_source_node_group TEXT NOT NULL DEFAULT '',
-  outbound_source_node TEXT NOT NULL DEFAULT '', outbound_source_node_group TEXT NOT NULL DEFAULT '',
-  outbound_source TEXT NOT NULL DEFAULT '', mode TEXT NOT NULL DEFAULT 'loader',
   source TEXT NOT NULL DEFAULT 'admin', called_by TEXT NOT NULL DEFAULT '',
   updated_at TEXT, retired_at TEXT, source_preset_id INTEGER, source_preset_version INTEGER,
   UNIQUE(style_id, core_node_name));

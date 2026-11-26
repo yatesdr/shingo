@@ -128,7 +128,10 @@ cd "$(dirname "$0")/.."
 # 1349 → 1347: TestComplexOrder_RemainingUOP_ProcessNodeOnly, skipped since
 # 2026-05-01, was deleted with its two discards; the repolint probe-source
 # reader that came in with the raw-syscall rule checks its Unquote.
-FROZEN=1347
+# 1356 → 1352 on main: the lanes' deleted tests carried four silent
+# discards (main's "chore: lower the test error-discard ratchet to 1352").
+# 1347 → 1343: main merged into the branch brings those four deletions.
+FROZEN=1343
 
 if ! command -v golangci-lint >/dev/null 2>&1; then
   echo "FAIL test-error-discard ratchet — golangci-lint not on PATH"

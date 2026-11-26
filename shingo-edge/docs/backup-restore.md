@@ -151,6 +151,8 @@ Procedure:
 Important:
 
 - The restore is staged first and applied on next startup.
+- A backup this build would not start on is refused, at every restore: when it is staged (the page shows the sentence), in `shingoedge migrate check` while it waits (`install-edge.sh` asks it before it stops the service), and when it is applied, before the config or the database is replaced. A backup from before v0.19.0 is one: install v0.19.0, restore it there and start it once, then install this build.
+- A restore removes the live database's `-wal`, `-shm` and `-journal` as it puts the backup in place: left by a killed Edge, they would bring the live rows back over it.
 - The running process is not hot-swapped while online.
 - **Staging writes next to the config file**, not to a state directory of its own: `backup.StageRestoreArchive` puts `pending-restore.tar.gz` in `<dir of config>/.shingoedge-backup/`. On a deployed station the config lives under `/etc/shingo/`, which is root-owned, so the Edge process cannot create that directory and **Restore on restart** fails to stage. Use the CLI restore below on a deployed station — it runs as whoever invokes it.
 

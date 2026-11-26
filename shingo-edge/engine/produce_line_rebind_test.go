@@ -37,12 +37,12 @@ func TestSingleRobotSwap_ProduceLineRebindIsProcessed(t *testing.T) {
 	testutil.MustNoErr(t, db.ClearProcessNodeActiveBinAndCount(nodeID), "unbind on the press pickup")
 
 	// Step 7: the swap sets the fresh EMPTY carrier on the press.
-	eng.HandleUOPAdjustment(protocol.UOPAdjustment{
+	eng.HandleBinLanded(protocol.BinLanded{
 		BinID:        emptyBin,
 		CoreNodeName: node.CoreNodeName,
-		NewRemaining: 0,
+		Count:        0,
 		Epoch:        3,
-		Bound:        true,
+		PlacedSeq:    testPlacedSeq.Add(1),
 	})
 
 	rt, err := db.GetProcessNodeRuntime(nodeID)

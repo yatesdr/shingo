@@ -18,7 +18,7 @@ import (
 // the memo dropped by a stored refusal message.
 
 func refusalFeedHeartbeat(svc *CoreDataService, station string, feeds map[string]string) {
-	svc.HandleEdgeHeartbeat(feedsPinEnv(station), &protocol.EdgeHeartbeat{StationID: station, Feeds: feeds})
+	svc.HandleEdgeHeartbeat(feedsPinEnv(station), &protocol.EdgeHeartbeat{Feeds: feeds})
 }
 
 // lastAck returns the ack in a recorded trace.

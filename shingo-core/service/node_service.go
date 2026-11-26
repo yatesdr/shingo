@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -31,6 +32,10 @@ type NodeService struct {
 	// names caches uid→display_name for station label rendering. One row per
 	// plant, dropped whole on rename/enroll. See station_names.go.
 	names stationNameCache
+
+	// stationRemoved is called after a station's removal commits
+	// (SetStationRemovedFunc).
+	stationRemoved atomic.Pointer[func(station string)]
 
 	// levelChanged is called after a group's level or layer wants are saved
 	// or removed (level_changed.go).
@@ -581,7 +586,7 @@ func (s *NodeService) EnrollEdge(displayName string) (*registry.Edge, error) {
 		return nil, err
 	}
 	s.invalidateStationNames()
-	s.FeedsChangedPlantWide() // a loader naming this uid carries its name
+	s.FeedsChangedPlantWide() // a loader naming this uid, and a node it claims, carry its name
 	return e, nil
 }
 
@@ -597,7 +602,7 @@ func (s *NodeService) RenameEdge(uid, displayName string) (bool, error) {
 	// ran, drop the cache" and a spurious reload of a one-row map costs nothing.
 	if err == nil {
 		s.invalidateStationNames()
-		s.FeedsChangedPlantWide() // a loader naming this Edge carries its name
+		s.FeedsChangedPlantWide() // a loader naming this Edge, and a node it claims, carry its name
 	}
 	return ok, err
 }
@@ -609,9 +614,38 @@ func (s *NodeService) ClaimEdge(uid, displayName string) (bool, error) {
 	ok, err := s.db.ClaimEdge(uid, displayName)
 	if err == nil {
 		s.invalidateStationNames()
-		s.FeedsChangedPlantWide() // a loader naming this Edge carries its name
+		s.FeedsChangedPlantWide() // a loader naming this Edge, and a node it claims, carry its name
 	}
 	return ok, err
+}
+
+// ErrStationNotStale re-exports the registry's removal refusal, as
+// ErrAlreadyEnrolled does the enrollment's.
+var ErrStationNotStale = registry.ErrNotStale
+
+// SetStationRemovedFunc installs what follows a station's removal: the
+// messaging layer forgetting what it holds of that station in memory.
+func (s *NodeService) SetStationRemovedFunc(fn func(station string)) {
+	s.stationRemoved.Store(&fn)
+}
+
+// RemoveEdge removes a stale station (store.RemoveStaleStation, which holds the
+// stale check). After the commit the station's feeds state is forgotten and
+// the loaders it owned are re-derived for the stations left (the hook), and
+// the other stations' node lists go through the change door: they marked the
+// nodes it claimed.
+func (s *NodeService) RemoveEdge(uid, actor string) error {
+	processes, err := s.db.RemoveStaleStation(uid, actor)
+	if err != nil {
+		return err
+	}
+	log.Printf("node_service: station %s removed by %s; claims of %v cleared", uid, actor, processes)
+	s.invalidateStationNames()
+	if fn := s.stationRemoved.Load(); fn != nil && *fn != nil {
+		(*fn)(uid)
+	}
+	s.FeedsChangedPlantWide()
+	return nil
 }
 
 // RebindEdge moves a station's binding to a new machine and clears its

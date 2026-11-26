@@ -66,6 +66,13 @@ func (e *Engine) SetContainmentChangedFunc(fn func()) {
 	e.payloadService.SetContainmentChangedFunc(fn)
 }
 
+// SetStationRemovedFunc wires what follows Remove station to the messaging
+// layer, which holds the station's feeds state in memory
+// (service.NodeService.RemoveEdge). Set once at the composition root.
+func (e *Engine) SetStationRemovedFunc(fn func(station string)) {
+	e.nodeService.SetStationRemovedFunc(fn)
+}
+
 // SetFeedsChangedFunc wires the change doors (service.FeedDoors) of every
 // writer of what the node list, the scene and the catalog are built from to
 // the messaging layer's one body, which forgets the builds a write made stale
@@ -136,8 +143,8 @@ func (e *Engine) notifyContainmentChanged() {
 
 // EdgeFeedFlags lists the plain-text feed conditions flagged for one station —
 // a feed resent three times without converging, a process two stations both
-// report. Read-only; nil until the messaging layer is wired, and empty when
-// nothing is wrong.
+// report, a node two stations claim. Read-only; nil until the messaging layer
+// is wired, and empty when nothing is wrong.
 func (e *Engine) EdgeFeedFlags(station string) []string {
 	if fn := e.edgeFeedFlags.Load(); fn != nil {
 		return (*fn)(station)

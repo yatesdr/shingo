@@ -3,9 +3,9 @@
 // way. Mirrors shingo-core/internal/testdb.
 //
 // Each Open is a COPY of a template migrated once per test binary, not a run
-// of the migration chain. A migration-chain store.Open of an empty file is 441
-// statements on a one-connection SQLite (counted 2026-11-23); copying the
-// migrated file is one sequential write.
+// of the migration chain. A store.Open of an empty file runs the start's
+// checks, the baseline and the migrations above it on a one-connection SQLite;
+// copying the migrated file is one sequential write.
 // The template is built by the real store.Open — so the migrations and the
 // post-migration schema check run for real, once — and every copy is opened
 // with store.OpenMigrated, which runs the schema check again. Tests that are

@@ -477,6 +477,16 @@ mix_is() {
   [ "$(empties "$K" "$SMALL")" = "$1" ] && [ "$(empties "$K" "$BIG")" = "$2" ] \
     && [ "$(empties "$K" "$TOTES")" = "$3" ] && [ "$(empties "$K" "$C32")" = "$4" ]
 }
+# mix_with_spares <small+big> <totes> <32x30>: P5-KANBAN's 45x48 is ten over its minimum, and a
+# spare stands as whatever it was last set, so small and big are exact only together, each
+# holding its mix of 2. Totes and 32x30 are exact.
+mix_with_spares() {
+  local small big
+  small="$(empties "$K" "$SMALL")"
+  big="$(empties "$K" "$BIG")"
+  [ "${small:-0}" -ge 2 ] && [ "${big:-0}" -ge 2 ] && [ "$(( ${small:-0} + ${big:-0} ))" = "$1" ] \
+    && [ "$(empties "$K" "$TOTES")" = "$2" ] && [ "$(empties "$K" "$C32")" = "$3" ]
+}
 mix_said() {
   echo "K S$(empties "$K" "$SMALL") B$(empties "$K" "$BIG") T$(empties "$K" "$TOTES") C$(empties "$K" "$C32")"
 }
@@ -945,6 +955,16 @@ run_W5() {
 }
 
 # ── FIVE PRESSES ON ONE UNLOADER ───────────────────────
+# expect_spares <what> <small+big> <totes> <32x30>: mix_with_spares, waited for as expect_mix is.
+expect_spares() {
+  local what=$1; shift
+  local want="small+big $1 (each 2 or more) T$2 C$3"
+  if wait_for 180 "$what: K $want" "mix_with_spares $1 $2 $3"; then
+    pass "$what: K $want ($(mix_said))"
+  else
+    fail "$what: $(mix_said), want $want"
+  fi
+}
 # press_n <n>: aim START, CANCEL and the gate at press n.
 press_n() {
   PRESS_OPS="P5-PRESS-$1-OPS"
@@ -1000,7 +1020,7 @@ run_P3() {
   sim_min 2
   press_n 1; walk_start P5-1-SMALL P1-SMALL; walk_gate_and_cutover "press 1 to small"
   sim_min 20
-  expect_mix "back on small" 2 2 2 22
+  expect_spares "back on small" 14 2 22
   check_zero "pushes parked at a level" "$(orders_count "queue_cause = '$PARKED_AT_LEVEL'")"
   found_held
   sm_unchanged
@@ -1068,7 +1088,7 @@ run_P6() {
   press_gate_cut 2 big
   sim_min 20
   expect_on_press "8 positions hold big" "$BIG" 8
-  expect_mix "after both" 2 2 2 22
+  expect_spares "after both" 14 2 22
   check_zero "pushes parked at a level" "$(orders_count "queue_cause = '$PARKED_AT_LEVEL'")"
   found_held
   sm_unchanged

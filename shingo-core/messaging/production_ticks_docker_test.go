@@ -104,7 +104,7 @@ func TestEdgeHeartbeat_RecordsTickLag(t *testing.T) {
 	}
 	svc := NewCoreDataService(db, &captureResponder{}, service.EpochAnnounce{})
 	pending, age := int64(12), int64(4200)
-	svc.HandleEdgeHeartbeat(ticksEnv(uid), &protocol.EdgeHeartbeat{StationID: uid, TickPending: &pending, TickOldestUnsentAgeMS: &age})
+	svc.HandleEdgeHeartbeat(ticksEnv(uid), &protocol.EdgeHeartbeat{TickPending: &pending, TickOldestUnsentAgeMS: &age})
 
 	e, err := db.GetEdgeByUID(uid)
 	if err != nil {
@@ -115,7 +115,7 @@ func TestEdgeHeartbeat_RecordsTickLag(t *testing.T) {
 	}
 	first := *e.TickReportedAt
 
-	svc.HandleEdgeHeartbeat(ticksEnv(uid), &protocol.EdgeHeartbeat{StationID: uid})
+	svc.HandleEdgeHeartbeat(ticksEnv(uid), &protocol.EdgeHeartbeat{})
 	e, err = db.GetEdgeByUID(uid)
 	if err != nil {
 		t.Fatal(err)

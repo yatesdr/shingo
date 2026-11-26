@@ -37,9 +37,9 @@ import (
 // need a framework around it and every one of those would be a mechanism nobody
 // could later delete safely.
 //
-// Invalidation is by the two calls that can change the answer — RenameEdge and
-// EnrollEdge — so a rename is visible on the next page load with no Core
-// restart. A miss is not an error: an unknown station resolves to itself.
+// Invalidation is by the calls that can change the answer — RenameEdge,
+// ClaimEdge, EnrollEdge and RemoveEdge — so a rename is visible on the next
+// page load with no Core restart. A miss is not an error: an unknown station resolves to itself.
 //
 // # NOTHING HERE PARSES THE UID
 //

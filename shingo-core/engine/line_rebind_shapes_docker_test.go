@@ -123,9 +123,9 @@ func TestSingleRobotChangeover_SwapLegRebindsTheCarrierItsPartnerStaged(t *testi
 		t.Errorf("the OLD carrier is recorded at node %v, want outbound staging (%d) — it was parked there "+
 			"at step 3 and nothing has moved it since", old.NodeID, outStage.ID)
 	}
-	ann := boundAnnouncementsFor(t, db, line.Name)
+	ann := landingsAt(t, db, line.Name)
 	if len(ann) == 0 {
-		t.Fatalf("no Bound UOPAdjustment for %s after the swap leg set the new carrier on it", line.Name)
+		t.Fatalf("no landing for %s after the swap leg set the new carrier on it", line.Name)
 	}
 	if ann[len(ann)-1].BinID != fresh.ID {
 		t.Errorf("the rebind names bin %d, want the NEW carrier %d. The Edge binds the line's counter to "+
@@ -183,9 +183,9 @@ func TestPressIndex3_R2RebindsTheCarrierItSetOnThePress(t *testing.T) {
 	})
 
 	testdb.RequireBinAtNode(t, db, onDeck.ID, press.ID)
-	ann := boundAnnouncementsFor(t, db, press.Name)
+	ann := landingsAt(t, db, press.Name)
 	if len(ann) == 0 {
-		t.Fatalf("no Bound UOPAdjustment for %s after R2 set the on-deck carrier on it", press.Name)
+		t.Fatalf("no landing for %s after R2 set the on-deck carrier on it", press.Name)
 	}
 	if ann[len(ann)-1].BinID != onDeck.ID {
 		t.Errorf("the rebind names bin %d, want the carrier R2 set on the press (%d)", ann[len(ann)-1].BinID, onDeck.ID)

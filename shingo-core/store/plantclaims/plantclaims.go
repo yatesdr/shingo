@@ -16,6 +16,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 
 	"shingo/protocol"
@@ -99,24 +100,37 @@ func ReplaceProcess(db *sql.DB, processID string, styles []StyleRow, claims []Cl
 	return err
 }
 
+// Replaced is what a replace found and changed in one process's mirror.
+type Replaced struct {
+	// PreviousStation is the station the mirror named before ("" when none).
+	PreviousStation string
+	// ClaimedNodesMoved is whether who claims which node changed: the set of
+	// nodes the claims name (own and paired), or the station that claims them.
+	// It is what the node lists of the other stations carry
+	// (ClaimedElsewhere), so a report that moves only a part or a level is
+	// false here.
+	ClaimedNodesMoved bool
+}
+
 // ReplaceProcessFromStation is ReplaceProcess recording WHICH station published
 // the process: process_styles.station_uid, the address the sourceability feed
 // sends that process's verdicts to. stationID "" records NULL — the station is
 // unknown, and the feed then sends the process to every station, as before.
 //
-// It returns the station the mirror named for this process BEFORE the replace
-// ("" when none). A different, non-empty previous station means two stations
-// are publishing one process: the caller logs it, and this write — the last
-// writer — is what the mirror keeps.
+// It returns what it replaced (Replaced): the station the mirror named for this
+// process BEFORE the replace, and whether the claimed nodes moved, read off
+// the claims' own DELETE at no statement. A different, non-empty previous
+// station means two stations are publishing one process: the caller logs it,
+// and this write — the last writer — is what the mirror keeps.
 //
 // positions are the report's Positions (the seats the process binds at that no
 // claim names: loader windows and homes, FG drains), mirrored in
 // process_positions in the same transaction; nil clears them. Their station is
 // the process's process_styles.station_uid, like the claims'.
-func ReplaceProcessFromStation(db *sql.DB, processID, stationID string, styles []StyleRow, claims []ClaimRow, positions []string, staleGuardConfigGen int64) (previousStation string, err error) {
+func ReplaceProcessFromStation(db *sql.DB, processID, stationID string, styles []StyleRow, claims []ClaimRow, positions []string, staleGuardConfigGen int64) (out Replaced, err error) {
 	tx, err := db.Begin()
 	if err != nil {
-		return "", fmt.Errorf("plantclaims replace %s: begin: %w", processID, err)
+		return out, fmt.Errorf("plantclaims replace %s: begin: %w", processID, err)
 	}
 	defer tx.Rollback()
 
@@ -124,31 +138,32 @@ func ReplaceProcessFromStation(db *sql.DB, processID, stationID string, styles [
 	if err := tx.QueryRow(
 		`SELECT MAX(station_uid) FROM process_styles WHERE process_id = $1`, processID,
 	).Scan(&prev); err != nil {
-		return "", fmt.Errorf("plantclaims replace %s: read station: %w", processID, err)
+		return out, fmt.Errorf("plantclaims replace %s: read station: %w", processID, err)
 	}
-	previousStation = prev.String
+	out.PreviousStation = prev.String
 
 	if staleGuardConfigGen > 0 {
 		var have sql.NullInt64
 		if err := tx.QueryRow(
 			`SELECT MAX(config_gen) FROM process_styles WHERE process_id = $1`, processID,
 		).Scan(&have); err != nil {
-			return previousStation, fmt.Errorf("plantclaims replace %s: stale-guard read: %w", processID, err)
+			return out, fmt.Errorf("plantclaims replace %s: stale-guard read: %w", processID, err)
 		}
 		if have.Valid && have.Int64 > staleGuardConfigGen {
 			// A newer snapshot already landed for this process. Drop this one.
-			return previousStation, nil
+			return out, nil
 		}
 	}
 
 	if _, err := tx.Exec(`DELETE FROM process_styles WHERE process_id = $1`, processID); err != nil {
-		return previousStation, fmt.Errorf("plantclaims replace %s: delete styles: %w", processID, err)
+		return out, fmt.Errorf("plantclaims replace %s: delete styles: %w", processID, err)
 	}
-	if _, err := tx.Exec(`DELETE FROM style_claims WHERE process_id = $1`, processID); err != nil {
-		return previousStation, fmt.Errorf("plantclaims replace %s: delete claims: %w", processID, err)
+	before, err := deleteClaims(tx, processID)
+	if err != nil {
+		return out, fmt.Errorf("plantclaims replace %s: delete claims: %w", processID, err)
 	}
 	if err := replacePositions(tx, processID, positions); err != nil {
-		return previousStation, err
+		return out, err
 	}
 
 	for _, s := range styles {
@@ -157,7 +172,7 @@ func ReplaceProcessFromStation(db *sql.DB, processID, stationID string, styles [
 			 VALUES ($1, $2, $3, $4, NULLIF($5, ''))`,
 			s.ProcessID, s.StyleID, s.ConfigGen, s.IsActive, stationID,
 		); err != nil {
-			return previousStation, fmt.Errorf("plantclaims replace %s: insert style %s: %w", processID, s.StyleID, err)
+			return out, fmt.Errorf("plantclaims replace %s: insert style %s: %w", processID, s.StyleID, err)
 		}
 	}
 
@@ -196,14 +211,14 @@ func ReplaceProcessFromStation(db *sql.DB, processID, stationID string, styles [
 		  partial_destination)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`)
 	if err != nil {
-		return previousStation, fmt.Errorf("plantclaims replace %s: prepare claim insert: %w", processID, err)
+		return out, fmt.Errorf("plantclaims replace %s: prepare claim insert: %w", processID, err)
 	}
 	defer styleInsert.Close()
 
 	for _, c := range claims {
 		allowed, err := json.Marshal(c.AllowedPayloadCodes)
 		if err != nil {
-			return previousStation, fmt.Errorf("plantclaims replace %s: marshal allowed for %s: %w", processID, c.CoreNodeName, err)
+			return out, fmt.Errorf("plantclaims replace %s: marshal allowed for %s: %w", processID, c.CoreNodeName, err)
 		}
 		if c.AllowedPayloadCodes == nil {
 			allowed = []byte("[]")
@@ -214,11 +229,48 @@ func ReplaceProcessFromStation(db *sql.DB, processID, stationID string, styles [
 			c.InboundSource, c.OutboundDestination, c.PairedCoreNode, c.SecondPairedCoreNode,
 			c.PartialDestination,
 		); err != nil {
-			return previousStation, fmt.Errorf("plantclaims replace %s: insert claim %s: %w", processID, c.CoreNodeName, err)
+			return out, fmt.Errorf("plantclaims replace %s: insert claim %s: %w", processID, c.CoreNodeName, err)
 		}
 	}
 
-	return previousStation, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return out, err
+	}
+	after := map[string]bool{}
+	for _, c := range claims {
+		addClaimedNodes(after, c.CoreNodeName, c.PairedCoreNode, c.SecondPairedCoreNode)
+	}
+	out.ClaimedNodesMoved = !maps.Equal(before, after) || (len(after) > 0 && out.PreviousStation != stationID)
+	return out, nil
+}
+
+// deleteClaims deletes one process's claims on tx and returns the nodes they
+// named, from the same statement.
+func deleteClaims(tx *sql.Tx, processID string) (map[string]bool, error) {
+	rows, err := tx.Query(`DELETE FROM style_claims WHERE process_id = $1
+		RETURNING core_node_name, paired_core_node, second_paired_core_node`, processID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var own, paired, second string
+		if err := rows.Scan(&own, &paired, &second); err != nil {
+			return nil, err
+		}
+		addClaimedNodes(out, own, paired, second)
+	}
+	return out, rows.Err()
+}
+
+// addClaimedNodes adds the nodes one claim names to set.
+func addClaimedNodes(set map[string]bool, names ...string) {
+	for _, n := range names {
+		if n != "" {
+			set[n] = true
+		}
+	}
 }
 
 // replacePositions replaces one process's process_positions rows on tx: one
@@ -508,18 +560,15 @@ type Querier interface {
 	Query(query string, args ...any) (*sql.Rows, error)
 }
 
-// AddressedStation is a station a landing could go to, with the schema
-// version that station last registered with (edge_registry.schema_version).
-// SchemaVersion is 0 for a station that has not registered or reported none.
+// AddressedStation is a station a landing could go to.
 type AddressedStation struct {
-	StationID     string
-	SchemaVersion int
+	StationID string
 }
 
 // LandingAddress is what one read tells the landing about where it goes
 // (Lane H, H.3): the stations whose processes claim the node, and the order's
 // own material station (its station, or the one a station-unaware order
-// projects to; empty when it has none), each with its schema version (H.7).
+// projects to; empty when it has none).
 //
 // Plant is the last arm's address (RULINGS-C2c-run-through §4, D19's reach
 // gap): every registered Edge (edge_registry), filled ONLY when no station
@@ -535,8 +584,8 @@ type LandingAddress struct {
 // ResolveLandingAddress reads LandingAddress for a carrier placed at nodeName
 // by orderID (0 for a placement with no order). ONE statement, the "+1 mirror
 // read per arrival at a non-storage node" the brief names: the claims mirror,
-// the order's station and both stations' schema versions together, so the
-// version check (H.7) and the fallback cost nothing more. The last arm's
+// and the order's station together, so the fallback costs nothing more. The
+// last arm's
 // Edges (Plant) come in the same statement, so it costs nothing either.
 //
 // The order's station is spelled as engine.materialStation spells it: the
@@ -550,13 +599,13 @@ func ResolveLandingAddress(q Querier, nodeName string, orderID int64) (LandingAd
 		     o AS (SELECT CASE WHEN station_unaware THEN projects_to_station_uid
 		                 WHEN station_uid <> '' THEN station_uid ELSE requested_by END AS st, edge_uuid
 		             FROM orders WHERE id = $2)
-		SELECT 'claim', c.station_uid, COALESCE(er.schema_version, 0), ''
-		  FROM c LEFT JOIN edge_registry er ON er.station_uid = c.station_uid
+		SELECT 'claim', c.station_uid, ''
+		  FROM c
 		UNION ALL
-		SELECT 'order', o.st, COALESCE(er.schema_version, 0), o.edge_uuid
-		  FROM o LEFT JOIN edge_registry er ON er.station_uid = o.st AND o.st <> ''
+		SELECT 'order', o.st, o.edge_uuid
+		  FROM o
 		UNION ALL
-		SELECT 'plant', er.station_uid, COALESCE(er.schema_version, 0), ''
+		SELECT 'plant', er.station_uid, ''
 		  `+LastArmEdgesSQL+`
 		   AND NOT EXISTS (SELECT 1 FROM c)
 		   AND NOT EXISTS (SELECT 1 FROM o WHERE COALESCE(o.st, '') <> '')
@@ -569,7 +618,7 @@ func ResolveLandingAddress(q Querier, nodeName string, orderID int64) (LandingAd
 	for rows.Next() {
 		var kind, uuid string
 		var st AddressedStation
-		if err := rows.Scan(&kind, &st.StationID, &st.SchemaVersion, &uuid); err != nil {
+		if err := rows.Scan(&kind, &st.StationID, &uuid); err != nil {
 			return LandingAddress{}, fmt.Errorf("plantclaims landing address %s: scan: %w", nodeName, err)
 		}
 		switch kind {

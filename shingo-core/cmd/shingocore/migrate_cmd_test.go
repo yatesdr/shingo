@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -148,5 +149,41 @@ func TestMain_AnArgumentAfterTheFlagsIsUsage(t *testing.T) {
 		if strings.Contains(stderr.String(), "shingocore: starting") {
 			t.Errorf("shingocore %q started a boot", args)
 		}
+	}
+}
+
+// TestInstallCore_AFailedBackupStopsTheInstall runs install-core.sh's backup
+// block: a backup tar cannot write exits 1 naming it, and a first install,
+// with nothing to back up, goes on.
+func TestInstallCore_AFailedBackupStopsTheInstall(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("the installer is a Linux script")
+	}
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "install-core.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const opens = `if [ ${#BACKUP_FILES[@]} -gt 0 ]; then`
+	_, rest, found := strings.Cut(string(raw), opens)
+	block, _, closed := strings.Cut(rest, "\nfi\n")
+	if !found || !closed {
+		t.Fatal("install-core.sh has no backup block: move this pin with it")
+	}
+	dir := t.TempDir()
+	config := filepath.Join(dir, "shingocore.yaml")
+	if err := os.WriteFile(config, []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := "set -euo pipefail\nBACKUP_PATH=$1; shift; BACKUP_FILES=(\"$@\")\n" + opens + block + "\nfi\necho went-on\n"
+	run := func(args ...string) (string, error) {
+		out, err := exec.Command("bash", append([]string{"-c", script, "backup"}, args...)...).CombinedOutput()
+		return string(out), err
+	}
+	if out, err := run(filepath.Join(dir, "absent", "b.tgz"), config); err == nil || !strings.Contains(out, "could not back up") || strings.Contains(out, "went-on") {
+		t.Errorf("a backup tar cannot write: err %v, output %q; want a failure naming it", err, out)
+	}
+	if out, err := run(filepath.Join(dir, "b.tgz")); err != nil || !strings.Contains(out, "went-on") {
+		t.Errorf("a first install: err %v, output %q; want it to go on", err, out)
 	}
 }

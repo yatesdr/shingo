@@ -20,6 +20,7 @@ scope shingo-core/engine
 scope shingo-core/dispatch
 
 go shingo-core/engine/engine_lifecycle.go:stopBounded 1 Stop's own waiter: it runs stopAndWait so that Stop can return at its deadline whatever is still running, so it cannot be in the group it waits for (TestEngineStop_OneDeadlineOverEveryWait)
+go shingo-core/engine/engine_lifecycle.go:joinWithin 1 a join's own waiter: it runs the join so that Stop can give up on it at its bound whatever is still running, so it cannot be in the group it waits for (TestEngineStop_GivesUpAtTheBound)
 go shingo-core/engine/engine_lifecycle.go:tableTurnAlarm 1 the table-turn alarm's e-mail send: Stop never waits on a mail server; the send reads no database and logs through the process log, not the engine's
 go shingo-core/engine/sourceability_monitor.go:Run 1 the sourceability monitor's ticker: the monitor counts each pass (begin) and its stop waits for one running (TestSourceabilityMonitor_StopWaitsForARunningRecompute)
 AfterFunc shingo-core/engine/sourceability_monitor.go:arm 1 the sourceability monitor's debounce: its stop cancels an armed one and waits for a flush already running (TestSourceabilityMonitor_StopCancelsAnArmedDebounce)

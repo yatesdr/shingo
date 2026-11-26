@@ -3,16 +3,18 @@
 // The Scanner acquires the orders in the acquiring set (pending and
 // queued, protocol.IsAcquiring): a pass asks each one once, dispatches
 // one it can source and parks one it cannot, queued with its cause.
-// ("sourcing" is a status only history rows still carry.) It runs in
-// two modes:
+// ("sourcing" is a status only history rows still carry.) One worker,
+// started by StartPeriodicSweep, runs the passes, and two things ask it
+// for one:
 //
-//   - event-driven: callers invoke Trigger() from event handlers and
-//     then RunOnce() from a goroutine — useful for reacting to
-//     EventBinUpdated / EventOrderCompleted / EventOrderCancelled /
-//     EventOrderFailed on the engine event bus;
-//   - periodic sweep: StartPeriodicSweep kicks off a background
-//     ticker as a safety net so orders are never stuck forever even
-//     if a trigger is missed.
+//   - events: the engine's handlers call Trigger() (EventBinUpdated /
+//     EventOrderCompleted / EventOrderCancelled / EventOrderFailed and
+//     the rest of dispatch.waitPopulations' acquiring row);
+//   - the periodic timer, as a safety net so orders are never stuck
+//     forever even if a trigger is missed.
+//
+// RunOnce is a pass on the caller's goroutine, for the boot scan and
+// tests. Door and AcquireOne take the same lock as a pass.
 //
 // Dependencies are supplied at construction:
 //

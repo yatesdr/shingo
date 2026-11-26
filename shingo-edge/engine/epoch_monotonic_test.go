@@ -125,12 +125,15 @@ func TestUOPAdjustmentEpoch_BoundSiteNeverGoesBackward(t *testing.T) {
 	eng := newCoverageEngine(t)
 	node, binID := boundNodeFixture(t, eng, "EPOCH-SITE-BOUND", 7101, 9)
 
-	rt := adjustmentEpoch(t, eng, node, protocol.UOPAdjustment{
-		BinID: binID, CoreNodeName: "EPOCH-SITE-BOUND", NewRemaining: 11, Epoch: 4,
-		Bound: true, Actor: "admin-under-test",
+	eng.HandleBinLanded(protocol.BinLanded{
+		BinID: binID, CoreNodeName: "EPOCH-SITE-BOUND", Count: 11, Epoch: 4, PlacedSeq: testPlacedSeq.Add(1),
 	})
+	rt, err := eng.db.GetProcessNodeRuntime(node)
+	if err != nil {
+		t.Fatalf("read runtime: %v", err)
+	}
 	if rt.ActiveBinEpoch != 9 {
-		t.Errorf("epoch = %d, want 9 — a late Bound announcement walked the stamp backward", rt.ActiveBinEpoch)
+		t.Errorf("epoch = %d, want 9 — a late landing walked the stamp backward", rt.ActiveBinEpoch)
 	}
 	if rt.RemainingUOPCached != 25 {
 		t.Errorf("remaining = %d, want 25 — a landing for the bin already bound at a newer generation "+

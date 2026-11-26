@@ -1,6 +1,7 @@
-// edges.js — rename an enrolled station from the Stations page.
+// edges.js — the Stations page acts: rename a station, name one that
+// introduced itself, remove a stale one.
 //
-// THIS IS THE ONLY WRITE ON THE PAGE, AND IT WRITES ONE COLUMN. The rename goes
+// THE RENAME WRITES ONE COLUMN. It goes
 // to POST /api/edges/rename?uid=<uid>, which is registry.SetDisplayName — one
 // UPDATE against edge_registry.display_name. Nothing else moves: not the uid,
 // not the rows on orders / mission_telemetry / outbox that carry it, not the
@@ -12,7 +13,7 @@
 // re-issue endpoint on Core by design — replacement hardware takes the EXISTING
 // uid off this page and into the new Pi's shingoedge.yaml.
 
-import { prompt as uiPrompt } from '/static/shared/layer.js';
+import { confirm as uiConfirm, prompt as uiPrompt } from '/static/shared/layer.js';
 import { toast } from '/static/shared/notice.js';
 import { apiPost } from '/static/app.js';
 
@@ -92,7 +93,31 @@ async function claimEdge(btn) {
   }
 }
 
+// removeEdge takes a stale station off: its claims, its feeds state and its
+// row. The button is drawn on a stale row, and the server refuses any other.
+async function removeEdge(btn) {
+  const row = rowFor(btn);
+  if (!row || !row.uid) return;
+
+  const name = (row.nameEl && row.nameEl.textContent.trim()) || row.uid;
+  if (!await uiConfirm('Remove ' + name + '? Its claims and name go; history stays.',
+    { ok: 'Remove station' })) return;
+
+  btn.disabled = true;
+  try {
+    await apiPost('/api/edges/remove?uid=' + encodeURIComponent(row.uid), {});
+    // Reloaded, not edited in place: the flags on the rows of the other
+    // stations named the claims of this one.
+    window.location.reload();
+  } catch (e) {
+    toast('Remove failed: ' + e, 'error');
+    btn.disabled = false;
+  }
+}
+
 document.addEventListener('click', (ev) => {
+  const remove = ev.target.closest('[data-action="removeEdge"]');
+  if (remove) { ev.preventDefault(); removeEdge(remove); return; }
   const rename = ev.target.closest('[data-action="renameEdge"]');
   if (rename) { ev.preventDefault(); renameEdge(rename); return; }
   const claim = ev.target.closest('[data-action="claimEdge"]');

@@ -28,9 +28,9 @@ func TestHandoff_ReadsEachNumberOffTheRealSchema(t *testing.T) {
 		_, err = db.Exec(`INSERT INTO outbox (topic, payload, msg_type, dst_station) VALUES ('d', $1, $2, '*')`, data, msgType)
 		testutil.MustNoErr(t, err, "seed outbox")
 	}
-	enqueue(protocol.SubjectUOPAdjustment, &protocol.UOPAdjustment{BinID: 1, CoreNodeName: line, Bound: true})
-	enqueue(protocol.SubjectUOPAdjustment, &protocol.UOPAdjustment{BinID: 2, CoreNodeName: "SLN_009", Bound: true})
-	enqueue(protocol.SubjectUOPAdjustment, &protocol.UOPAdjustment{BinID: 2, CoreNodeName: "SLN_009", Bound: true})
+	enqueue(protocol.SubjectBinLanded, &protocol.BinLanded{BinID: 1, CoreNodeName: line})
+	enqueue(protocol.SubjectBinLanded, &protocol.BinLanded{BinID: 2, CoreNodeName: "SLN_009"})
+	enqueue(protocol.SubjectBinLanded, &protocol.BinLanded{BinID: 2, CoreNodeName: "SLN_009"})
 	enqueue(protocol.SubjectUOPAdjustment, &protocol.UOPAdjustment{BinID: 3, CoreNodeName: line, NewRemaining: 5}) // a count, not a placement
 	enqueue(protocol.SubjectBinEpochRefresh, &protocol.BinEpochRefresh{BinID: 3, CoreNodeName: "_TRANSIT", Epoch: 4})
 	enqueue(protocol.SubjectBinEpochRefresh, &protocol.BinEpochRefresh{BinID: 3, CoreNodeName: line, Epoch: 5})
@@ -69,7 +69,7 @@ func TestHandoff_ReadsEachNumberOffTheRealSchema(t *testing.T) {
 	h, err := readHandoff(db.DB)
 	testutil.MustNoErr(t, err, "read the handoff")
 	if sumCounts(h.placements) != 3 {
-		t.Errorf("placements = %+v, want the three Bound adjustments only", h.placements)
+		t.Errorf("placements = %+v, want the three landings only", h.placements)
 	}
 	if !h.claims["line-1"][line] {
 		t.Errorf("claims = %v, want line-1 modelling %s", h.claims, line)

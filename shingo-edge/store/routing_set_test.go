@@ -16,9 +16,8 @@ import (
 // per-process flow-composer gate it is reviewed behind.
 //
 // A new test file, for a new aggregate: nothing else in this package is about
-// which nodes a process may route material through. The fixture-driven pins
-// against the plant A and B fixtures live in routing_set_backfill_test.go,
-// because they exercise the same store surface against real rows.
+// which nodes a process may route material through. Where a test needs a set
+// derived from claims it seeds one with runBackfillOnce (routing_seed_test.go).
 
 // TestProcess_FlowComposerEnabled_ReadsBack pins the gate column both ways.
 //

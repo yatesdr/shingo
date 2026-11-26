@@ -21,6 +21,10 @@ import (
 // accepts it), so the positions checklist offers it even when another process
 // already holds it, and greys out every other node another process holds.
 //
+// ClaimedBy (NodeInfo's) is the other stations that claim the node: the
+// positions checklist greys it as it does another process's node, and SetNodes
+// refuses nothing on it.
+//
 // Group is the node group a member is in, so a picker for a role where Core
 // picks leaves members out (desktop-bodies.js legExclusion), by the same map
 // the leg refusal reads (domain.CoreNodeKinds.GroupOf).

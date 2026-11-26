@@ -140,7 +140,6 @@ func TestRuntimeBinding_DeliveredFlipsCacheAndPointers(t *testing.T) {
 	// CONVERTED with Lane H (H.5): the seed rides the landing (Core's count
 	// and generation, read in the arrival's own transaction), which binds; the
 	// delivered that follows only checks. No HTTP pull.
-	uop := deliveredBinUOP
 	eng.HandleBinLanded(protocol.BinLanded{
 		BinID: bid, CoreNodeName: "DEL-FLIP-NODE", Count: deliveredBinUOP, Epoch: deliveredEpoch, PlacedSeq: 1,
 	})
@@ -148,7 +147,7 @@ func TestRuntimeBinding_DeliveredFlipsCacheAndPointers(t *testing.T) {
 		Type: EventOrderDelivered,
 		Payload: OrderDeliveredEvent{
 			OrderID: orderID, OrderUUID: "uuid-del-flip", OrderType: orders.TypeRetrieve,
-			ProcessNodeID: &nodeID, BinID: &bid, BinUOP: &uop, BinEpoch: deliveredEpoch, LandingSent: true,
+			ProcessNodeID: &nodeID, BinID: &bid, FromNotice: true,
 		},
 	})
 
@@ -220,7 +219,7 @@ func TestRuntimeBinding_RemovalOnlyOrderDoesNotResetCache(t *testing.T) {
 // load-bearing test for the model (decision 55). While no bin is bound
 // (pickup→delivery gap) the bin portion of each tick is logged in the ledger
 // (durably), not lost or charged to a departed bin. When the next bin's
-// OrderDelivered binds it, it starts at its full count and takes its own
+// landing binds it, it starts at its full count and takes its own
 // strokes.
 func TestRuntimeBinding_PLCTicksWithNoBinAreLoggedTheNextBinStartsFresh(t *testing.T) {
 	t.Parallel()
@@ -253,14 +252,16 @@ func TestRuntimeBinding_PLCTicksWithNoBinAreLoggedTheNextBinStartsFresh(t *testi
 	// New bin arrives: OrderDelivered seeds active_bin_id + count + epoch.
 	const newBin int64 = 9502
 	const newBinUOP = 1000
-	uop := newBinUOP
 	orderID, _ := db.CreateOrder("uuid-hold-replay", orders.TypeRetrieve,
 		&nodeID, false, 1, "HOLD-REPLAY-NODE", "", "", protocol.Height{}, false, "", "", "")
 	bid := newBin
 	db.UpdateOrderBinID(orderID, &bid)
+	eng.HandleBinLanded(protocol.BinLanded{
+		BinID: bid, CoreNodeName: "HOLD-REPLAY-NODE", Count: newBinUOP, Epoch: 7, OrderUUID: "uuid-hold-replay", PlacedSeq: 1,
+	})
 	eng.Events.Emit(Event{Type: EventOrderDelivered, Payload: OrderDeliveredEvent{
 		OrderID: orderID, OrderUUID: "uuid-hold-replay", OrderType: orders.TypeRetrieve,
-		ProcessNodeID: &nodeID, BinID: &bid, BinUOP: &uop, BinEpoch: 7,
+		ProcessNodeID: &nodeID, BinID: &bid, FromNotice: true,
 	}})
 
 	// The first tick after binding is the new bin's alone: it lands fresh.

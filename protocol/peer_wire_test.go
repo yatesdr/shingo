@@ -12,9 +12,10 @@ import (
 	"time"
 )
 
-// peer_wire_test.go — the bodies the deployed peers encode, decoded both ways.
+// peer_wire_test.go — the bodies released peers encode, decoded both ways. The
+// floor's (v0.19.0) are peer_floor_wire_test.go's. The cases below are older.
 //
-// The deployed peers are a v0.18.0 Core and a v0.17.2 Edge. Every message here
+// Their peers are a v0.18.0 Core and a v0.17.2 Edge, below the floor. Every message here
 // keeps the shape it has at both tags (git diff v0.17.2 v0.18.0 changes none of
 // these types), so one frozen copy of each type, below, stands for both peers,
 // and testdata/peerwire holds the body both tags encode, every field set
@@ -51,13 +52,17 @@ type peerWireCase struct {
 }
 
 func peerWireCases() []peerWireCase {
+	return append(deployedPeerWireCases(), peerFloorWireCases()...)
+}
+
+func deployedPeerWireCases() []peerWireCase {
 	const core, edge = "the v0.18.0 Core", "the v0.17.2 Edge"
 	return []peerWireCase{
 		{"BinUOPDelta", edge, []string{"station"},
 			func() any { return &BinUOPDelta{} }, func() any { return &peerBinUOPDelta{} }, nil},
 		{"EdgeRegistered", core, []string{"station_id"},
 			func() any { return &EdgeRegistered{} }, func() any { return &peerEdgeRegistered{} }, nil},
-		{"EdgeHeartbeatAck", core, []string{"station_id"},
+		{"EdgeHeartbeatAck", core, []string{"station_id", "claims", "bin_watch"},
 			func() any { return &EdgeHeartbeatAck{} }, func() any { return &peerEdgeHeartbeatAck{} }, nil},
 		{"EdgeStale", core, []string{"station_id"},
 			func() any { return &EdgeStale{} }, func() any { return &peerEdgeStale{} }, nil},
@@ -101,8 +106,8 @@ func TestPeerWire_TheGoldensAreThePeersWholeShape(t *testing.T) {
 				t.Fatalf("marshal the frozen copy: %v", err)
 			}
 			if !bytes.Equal(again, golden) {
-				t.Fatalf("the frozen copy encodes\n%s\nbut %s encoded\n%s\nThe copy has drifted from the tag: copy the "+
-					"type from `git show v0.17.2:protocol/` again; do not regenerate the golden from this tree", again, c.sender, golden)
+				t.Fatalf("the frozen copy encodes\n%s\nbut %s encoded\n%s\nThe copy has drifted from the tag: copy the type "+
+					"from that release's protocol/ (git show <tag>:protocol/) again; do not regenerate the golden from this tree", again, c.sender, golden)
 			}
 			if path, ok := firstZeroField(reflect.ValueOf(peer).Elem(), c.name); !ok {
 				t.Errorf("%s is zero in the golden: set it in testdata/peerwire/gen.go and rerun it at both tags", path)

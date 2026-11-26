@@ -97,8 +97,9 @@ function rootButton(page, act, more) {
 function scrLines(page) {
     const host = page.byId('pd-scrlines');
     if (!host) return ['-- no screen lines'];
-    return host.innerHTML.split(/(?=<div class="pd-scrline"|<p class="pd-note")/).filter(Boolean).map(h => '-- ' + T.text(h
-        .replace(/<span class="setpick-chip">([\s\S]*?)<\/span>/g, ' ‹$1› ')
+    return host.innerHTML.split(/(?=<div class="pd-sfld pd-scrrow pd-screen"|<div class="pd-scrline"|<p class="pd-note")/).filter(Boolean).map(h => '-- ' + T.text(h
+        .replace(/<small>|<\/(?:small|b)>/g, ' $& ')
+        .replace(/<span class="picker-chip">([\s\S]*?)<\/span>/g, ' ‹$1› ')
         .replace(/<(button|a)\b[^>]*>([\s\S]*?)<\/(?:button|a)>/g, ' [$2] ')).replace(/\s+/g, ' ').trim());
 }
 function sheetTitle(page) {

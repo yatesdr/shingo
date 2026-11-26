@@ -917,9 +917,10 @@ func (r *kanbanRig) cardsSaid() string {
 	return strings.Join(out, "; ")
 }
 
-// TestKanbanRig_FivePressSteady: the master's [kanban5] on its one kanban: steady, each press
-// lets a pair go and takes a pair back, the family stays whole, and the counts are the one-press
-// counts whatever the presses.
+// TestKanbanRig_FivePressSteady: the master's [kanban5] on its one kanban, as seeded and at rest:
+// small stands at its mix and the ten spares, the family is whole, nothing is asked, and the tick
+// costs the one-press count whatever the presses. No cart moves here; the push-in is
+// TestKanbanRig_PressAndP5KanbansKeepThePushIn's.
 func TestKanbanRig_FivePressSteady(t *testing.T) {
 	t.Parallel()
 	windows := []string{"ULN_501", "ULN_502", "ULN_503", "ULN_504", "ULN_505", "ULN_506", "ULN_507", "ULN_508", "ULN_509", "ULN_510"}
@@ -928,8 +929,8 @@ func TestKanbanRig_FivePressSteady(t *testing.T) {
 	r := newKanbanRigOf(t, plant, windows)
 	const k = "P5-KANBAN"
 	line := func() engine.KanbanLineState { return r.card(k, rigSmall) }
-	if got := line(); got.Want != 22 || got.Resident != 2 || got.Gap != 0 || got.Held != 20 {
-		t.Fatalf("steady: %+v, want 22 wanted, 2 standing, 20 on the line, short 0", got)
+	if got := line(); got.Want != 22 || got.Resident != 12 || got.Gap != -10 || got.Held != 20 {
+		t.Fatalf("steady: %+v, want 22 wanted, 12 standing, 20 on the line, the 10 spares over", got)
 	}
 	if stmts := r.countTick(); len(stmts) > 3 {
 		t.Errorf("tick = %d statements on five presses\n%s", len(stmts), testutil.StatementBreakdown(stmts))
@@ -944,5 +945,64 @@ func TestKanbanRig_FivePressSteady(t *testing.T) {
 		if f.GroupNode == k && f.Found != f.Pool {
 			t.Errorf("%s: found %d of its pool %d", f.Family, f.Found, f.Pool)
 		}
+	}
+}
+
+// TestKanbanRig_PressAndP5KanbansKeepThePushIn: the push-into-kanban path on
+// the two lineside press kanbans of the master, end to end: a full at a window
+// of the unloader, the CLEAR (one as the lit type, one plain, which a station
+// with no tap setting sends), the empty-out to the kanban, counted Coming while
+// it is on its way and landed in the kanban. The path does not lean on
+// UNLOADER-A: these two keep it.
+func TestKanbanRig_PressAndP5KanbansKeepThePushIn(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		kanban, unload string
+		windows        []string
+		sides          []rigSide
+	}{
+		{rigK, "PRESS-UNLOAD", []string{"ULN_021", "ULN_022", "ULN_023", "ULN_024"}, rigSides},
+		{"P5-KANBAN", "P5-UNLOAD",
+			[]string{"ULN_501", "ULN_502", "ULN_503", "ULN_504", "ULN_505", "ULN_506", "ULN_507", "ULN_508", "ULN_509", "ULN_510"},
+			[]rigSide{{"PLN_511", "PLN_512", "P5-SM-L"}, {"PLN_513", "PLN_514", "P5-SM-R"}}},
+	} {
+		t.Run(tc.kanban, func(t *testing.T) {
+			t.Parallel()
+			plant, err := plantspec.Load("../../../plants/master.yaml")
+			testutil.MustNoErr(t, err, "the plant file")
+			r := newKanbanRigOf(t, plant, tc.windows)
+			before := r.residents(tc.kanban, rigSmall)
+			for _, s := range tc.sides {
+				full := r.cartAt(s.front)
+				r.fill(full, s.part)
+				r.move(s.front, tc.unload, full)
+			}
+			r.fly()
+			standing := r.standing()
+			if len(standing) != len(tc.sides) {
+				t.Fatalf("%d carts on %s, want %d: %s", len(standing), tc.unload, len(tc.sides), r.said(r.live()))
+			}
+			as := []string{rigSmall, ""}
+			var pushes []*orders.Order
+			for i, w := range standing {
+				pushes = append(pushes, r.tap(w, tc.kanban, as[i]))
+			}
+			for _, o := range pushes {
+				if got := r.groupOf(o.DeliveryNode); got != tc.kanban {
+					t.Errorf("the push off %s is aimed at %s, want %s", o.SourceNode, got, tc.kanban)
+				}
+			}
+			r.tick()
+			if got := r.card(tc.kanban, rigSmall); got.Coming != len(pushes) || got.Created != 0 {
+				t.Errorf("the pushes on their way read %+v, want Coming %d and no ask", got, len(pushes))
+			}
+			r.fly()
+			if left := r.live(); len(left) != 0 {
+				t.Errorf("orders left live: %s", r.said(left))
+			}
+			if got := r.residents(tc.kanban, rigSmall); got != before+len(pushes) {
+				t.Errorf("%s holds %d small after the pushes, want %d", tc.kanban, got, before+len(pushes))
+			}
+		})
 	}
 }

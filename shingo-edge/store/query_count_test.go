@@ -241,3 +241,52 @@ func dumpValue(v any) string {
 		return fmt.Sprintf("%T:%v", v, v)
 	}
 }
+
+// schemaDump is every sqlite_master row (type, name, table, CREATE text) in a
+// fixed order. SQLite rewrites a table's stored CREATE text on ADD and DROP
+// COLUMN, so a column coming back changes this dump. (internal/schemadump
+// cannot be used here: it imports this package.)
+func schemaDump(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open for dump: %v", err)
+	}
+	defer raw.Close()
+	rows, err := raw.Query(`SELECT type, name, tbl_name, COALESCE(sql, '') FROM sqlite_master
+		ORDER BY type, name`)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	defer rows.Close()
+	var b strings.Builder
+	for rows.Next() {
+		var typ, name, tbl, text string
+		if err := rows.Scan(&typ, &name, &tbl, &text); err != nil {
+			t.Fatalf("dump scan: %v", err)
+		}
+		b.WriteString(typ + " " + name + " ON " + tbl + "\n" + text + "\n\n")
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("dump rows: %v", err)
+	}
+	return b.String()
+}
+
+// firstDumpDiff is the first line at which two dumps differ.
+func firstDumpDiff(a, b string) string {
+	la, lb := strings.Split(a, "\n"), strings.Split(b, "\n")
+	for i := 0; i < len(la) || i < len(lb); i++ {
+		var x, y string
+		if i < len(la) {
+			x = la[i]
+		}
+		if i < len(lb) {
+			y = lb[i]
+		}
+		if x != y {
+			return "first difference at line " + strconv.Itoa(i+1) + ":\n  first: " + x + "\n  second: " + y
+		}
+	}
+	return "(no line difference)"
+}

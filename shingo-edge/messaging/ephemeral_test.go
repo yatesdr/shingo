@@ -87,7 +87,7 @@ func TestEphemeral_OpenOnlyBetweenStartAndStopAndNeverWaits(t *testing.T) {
 	c.openEphemeral = func([]string, string) ephemeralReader { return idleReader{closed: make(chan struct{})} }
 	c.openEphemeralWriter = func([]string) ephemeralWriter { return stuck }
 	env, err := protocol.NewEnvelope(protocol.TypeRobotWatch, protocol.Address{Role: protocol.RoleEdge, Station: "edge.a"},
-		protocol.Address{Role: protocol.RoleCore}, &protocol.RobotWatch{StationID: "edge.a"})
+		protocol.Address{Role: protocol.RoleCore}, &protocol.RobotWatch{})
 	if err != nil {
 		t.Fatal(err)
 	}

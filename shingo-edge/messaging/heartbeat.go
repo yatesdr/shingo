@@ -174,7 +174,6 @@ func (h *Heartbeater) sendRegister() {
 		protocol.Address{Role: protocol.RoleEdge, Station: h.stationID},
 		protocol.Address{Role: protocol.RoleCore},
 		&protocol.EdgeRegister{
-			StationID:     h.stationID,
 			Hostname:      hostname,
 			Instance:      h.instance,
 			Version:       h.version,
@@ -293,7 +292,7 @@ func (h *Heartbeater) sendCatalogRequest() {
 // The one builder: the loop sends it, and so does the debug page, through the
 // engine (engine Engine.HeartbeatBody, wired in main.go).
 func (h *Heartbeater) HeartbeatBody() *protocol.EdgeHeartbeat {
-	b := &protocol.EdgeHeartbeat{StationID: h.stationID}
+	b := &protocol.EdgeHeartbeat{}
 	if h.TimezoneFn != nil {
 		b.Timezone = h.TimezoneFn()
 	}
@@ -329,7 +328,7 @@ func (h *Heartbeater) sendHeartbeat() {
 	if err != nil {
 		log.Printf("heartbeater: send heartbeat failed after retries: %v", err)
 	} else {
-		h.DebugLog.Log("heartbeat sent station=%s", body.StationID)
+		h.DebugLog.Log("heartbeat sent station=%s", h.stationID)
 	}
 }
 

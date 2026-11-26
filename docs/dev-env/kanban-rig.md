@@ -106,8 +106,10 @@ A return always lands: the level governs the keeper's asks, never a cart of the 
 
 ## The five presses
 
-The master's `[kanban5]`: five presses of this shape, one shared unloader `P5-UNLOAD` of 10 windows, one kanban `P5-KANBAN` over all 20 positions, mix 2/2/2/2, pools 26 and 22, 48 slots admitting by family. Its plain supermarket is `[kanban]`'s `KP-SM` (one raid target serves both loops). One name in `bin_loaders.outbound_dest` is why sharing the unloader means one kanban.
+The master's `[kanban5]`: five presses of this shape, one shared unloader `P5-UNLOAD` of 10 windows, one kanban `P5-KANBAN` over all 20 positions, mix 2/2/2/2, pools 36 and 22 (45x48's minimum of 26 and ten spares for the carts at the windows), 58 slots admitting by family. Its plain supermarket is `[kanban]`'s `KP-SM` (one raid target serves both loops). One name in `bin_loaders.outbound_dest` is why sharing the unloader means one kanban.
 
 Runs: R1 on all five, steady, 20 wall-min; two presses leaving 45x48 in one cycle while a third returns; the all-bigs case on one press; a hand move between positions and the kanban; CANCEL on one press while another changes over; two presses STARTing onto big in one cycle.
+
+P3 and P6 end on totes 2, 32x30 22, and 14 small and big together with at least 2 of each: a spare stands as whatever it was last set, so the two are exact only together.
 
 Both rigs, every run: found equals pool per family at every sample; the supermarket unchanged; no loop cart parked at a level; no window held past its unload and a tick; every START's gate opens. The keeper tick's statement count does not grow with the press count (`TestKanbanRig_FivePressSteady`).

@@ -126,12 +126,6 @@ func (db *DB) GetOrderStepsJSON(id int64) (string, error) {
 	return orders.GetStepsJSON(db.DB, id)
 }
 
-// UpdateOrderStagedExpireAt sets (or clears) the staged_expire_at
-// timestamp on an order.
-func (db *DB) UpdateOrderStagedExpireAt(id int64, stagedExpireAt *time.Time) error {
-	return orders.UpdateStagedExpireAt(db.DB, id, stagedExpireAt)
-}
-
 // UpdateOrderBinID sets (or clears) the bin_id snapshot on an order.
 // PLC tick attribution at consume/produce time reads the active
 // order's BinID for delta envelope routing. Captured from the

@@ -75,7 +75,7 @@ func testHandlersWithSim(t *testing.T, sim *simulator.SimulatorBackend) (*Handle
 // constructed but never Started, for tests that assert what the orders board
 // RENDERS rather than what the plant does.
 //
-// Start() launches the fulfillment scanner (`go e.fulfillment.RunOnce()`,
+// Start() launches the boot scan on its own goroutine (Engine.startBootScan,
 // engine_lifecycle.go) and does not wait for it. A rendering test seeds order
 // state by writing it straight to the database, so the two race: when the
 // goroutine happens to land after the seeding, the scanner finds the seeded

@@ -1,0 +1,1 @@
+{"station_id":"stn-0e0e0e0e0e0e0e0e","hostname":"syn-edge","instance":"inst-1","version":"v0.19.0","timezone":"America/Chicago","schema_version":59,"catalog":[{"cell_label":"SYN-CELL","processes":[{"process_id":1,"style_id":2,"plc_name":"SYN-PLC","tag_name":"SYN-TAG"}]}]}

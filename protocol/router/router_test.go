@@ -341,14 +341,14 @@ func TestReadEphemeral_DispatchesWhatThisSideReadsAndNothingElse(t *testing.T) {
 		return signed
 	}
 	core := protocol.Address{Role: protocol.RoleCore}
-	watch := &protocol.RobotWatch{StationID: "edge.a", OrderUUIDs: []string{"u-1"}}
+	watch := &protocol.RobotWatch{OrderUUIDs: []string{"u-1"}}
 	read(wire(protocol.TypeRobotWatch, core, watch, 0, key))
 	read(wire(protocol.TypeRobotPositions, protocol.Address{Role: protocol.RoleEdge, Station: "edge.a"}, &protocol.RobotPositions{}, 0, key))
 	read(wire(protocol.TypeRobotWatch, protocol.Address{Role: protocol.RoleEdge, Station: "edge.b"}, watch, 0, key))
 	read(wire(protocol.TypeRobotWatch, core, watch, 11*time.Second, key))
 	read(wire(protocol.TypeRobotWatch, core, watch, 0, []byte("another key")))
 
-	if len(got) != 1 || got[0].StationID != "edge.a" || len(got[0].OrderUUIDs) != 1 || got[0].OrderUUIDs[0] != "u-1" {
+	if len(got) != 1 || len(got[0].OrderUUIDs) != 1 || got[0].OrderUUIDs[0] != "u-1" {
 		t.Errorf("dispatched %+v, want the one fresh watch to Core, decoded", got)
 	}
 	if buf.Len() != 0 {

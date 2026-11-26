@@ -409,19 +409,243 @@ func TestCoreFeeds_OneSendPerCarrier(t *testing.T) {
 func TestAsksFor_TheAckAdvertisesTheKinds(t *testing.T) {
 	t.Parallel()
 	s := &CoreDataService{}
-	feeds := &protocol.EdgeHeartbeat{Feeds: map[string]string{}}
-	if got := s.asksFor(feeds); got != nil {
+	if got := s.asksFor(); got != nil {
 		t.Errorf("no kinds injected: asks = %v, want nil", got)
 	}
 	s.SetAskKinds(func() []string { return nil })
-	if got := s.asksFor(feeds); got != nil {
+	if got := s.asksFor(); got != nil {
 		t.Errorf("none registered: asks = %v, want nil", got)
 	}
 	s.SetAskKinds(func() []string { return []string{protocol.AskBinClear, protocol.AskBinCount} })
-	if got := s.asksFor(feeds); !reflect.DeepEqual(got, []string{protocol.AskBinClear, protocol.AskBinCount}) {
+	if got := s.asksFor(); !reflect.DeepEqual(got, []string{protocol.AskBinClear, protocol.AskBinCount}) {
 		t.Errorf("asks = %v", got)
 	}
-	if got := s.asksFor(&protocol.EdgeHeartbeat{}); got != nil {
-		t.Errorf("an Edge without feeds: asks = %v, want nil", got)
+}
+
+// sentKeptPin is how many sends a record keeps since the last proved one
+// (protocol/resend). The positions below are read from it.
+const sentKeptPin = 256
+
+// pushN records n pushes, p1..pn, a second apart.
+func pushN(f *feedState, st, key string, n int, from time.Time) {
+	for i := 1; i <= n; i++ {
+		f.recordPush(st, key, fmt.Sprintf("p%d", i), from.Add(time.Duration(i)*time.Second))
+	}
+}
+
+// A quote is a statement about the moment the heartbeat left: a copy Core sent
+// since the last one the Edge proved ends the streak, however many newer copies
+// were on their way when it was compared, up to the newest sentKeptPin of them.
+func TestFeedState_AQuoteOfACopySentSinceTheLastProvedConverges(t *testing.T) {
+	t.Parallel()
+	const st, key = "edge.test", protocol.FeedBins
+	t0 := time.Date(2026, 11, 22, 9, 0, 0, 0, time.UTC)
+	cases := []struct {
+		pushes, quoted int
+		kept           bool
+	}{
+		{1, 1, true}, {2, 1, true}, {4, 2, true}, {22, 1, true}, {85, 64, true},
+		{sentKeptPin, 1, true}, {sentKeptPin, sentKeptPin, true},
+		{sentKeptPin + 1, 1, false}, {sentKeptPin + 1, 2, true},
+		{300, 300 - sentKeptPin, false}, {300, 300 - sentKeptPin + 1, true},
+	}
+	for _, c := range cases {
+		f := newFeedState()
+		f.compare(st, key, "c1", "", t0)
+		f.compare(st, key, "c2", "", t0.Add(time.Minute)) // two sends in a row
+		pushN(f, st, key, c.pushes, t0.Add(time.Minute))
+		if !f.compare(st, key, "c3", fmt.Sprintf("p%d", c.quoted), t0.Add(8*time.Minute)) {
+			t.Fatalf("%d pushes, quote %d: the newer value was not sent", c.pushes, c.quoted)
+		}
+		if got := len(f.flagsFor(st)) == 0; got != c.kept {
+			t.Errorf("%d pushes, then a quote of push %d: converging %v, want %v", c.pushes, c.quoted, got, c.kept)
+		}
+	}
+}
+
+// An Edge that stopped applying quotes the same digest every heartbeat. Wherever
+// that digest stands among the sends (first, middle, newest, at the bound, past
+// it), never sent, or empty, it is believed once at most: the third send flags.
+func TestFeedState_AFrozenQuoteStillFlags(t *testing.T) {
+	t.Parallel()
+	const st, key = "edge.test", protocol.FeedBins
+	want := []string{"bins not converging: sent 3 times"}
+	t0 := time.Date(2026, 11, 22, 9, 0, 0, 0, time.UTC)
+	for _, n := range []int{1, 2, 22, sentKeptPin, sentKeptPin + 1, 300} {
+		quotes := []string{"", "never-sent"}
+		at := map[int]bool{}
+		for _, p := range []int{1, n / 2, n - sentKeptPin, n - sentKeptPin + 1, n - 1, n} {
+			if p >= 1 && !at[p] {
+				at[p] = true
+				quotes = append(quotes, fmt.Sprintf("p%d", p))
+			}
+		}
+		for _, frozen := range quotes {
+			for _, pushing := range []bool{false, true} {
+				f := newFeedState()
+				pushN(f, st, key, n, t0)
+				for i := 0; i < 3; i++ {
+					at := t0.Add(time.Duration(10+i) * time.Minute)
+					f.compare(st, key, fmt.Sprintf("c%d", i), frozen, at)
+					var due []string
+					if i == 2 {
+						due = want
+					}
+					if got := f.flagsFor(st); len(got) != len(due) || (len(due) > 0 && !reflect.DeepEqual(got, due)) {
+						t.Errorf("%d pushes, frozen at %q, still pushing %v, heartbeat %d: flags = %v, want %v",
+							n, frozen, pushing, i+1, got, due)
+					}
+					if pushing {
+						f.recordPush(st, key, fmt.Sprintf("q%d", i), at.Add(time.Second))
+					}
+				}
+			}
+		}
+	}
+}
+
+// Proving a copy discards what came before it: a quote of an older one after
+// that is an Edge that went backwards, and counts.
+func TestFeedState_AQuoteOfADiscardedCopyCounts(t *testing.T) {
+	t.Parallel()
+	const st, key = "edge.test", protocol.FeedBins
+	t0 := time.Date(2026, 11, 22, 9, 0, 0, 0, time.UTC)
+	for _, older := range []string{"p1", "p2", "p3"} {
+		f := newFeedState()
+		pushN(f, st, key, 5, t0)
+		f.compare(st, key, "c0", "p3", t0.Add(time.Minute)) // proves p3
+		f.compare(st, key, "c1", older, t0.Add(2*time.Minute))
+		f.compare(st, key, "c2", older, t0.Add(3*time.Minute))
+		if got := f.flagsFor(st); len(got) != 1 {
+			t.Errorf("quote went back to %s after p3 was proved: flags = %v, want the flag", older, got)
+		}
+	}
+}
+
+// A value that goes A, B, A repeats a digest. An Edge applying every copy quotes
+// the same A on each heartbeat while B is in flight and is converging; one
+// frozen at A is believed once, for the newest A sent, not once for each.
+func TestFeedState_AValueThatGoesBackAndForth(t *testing.T) {
+	t.Parallel()
+	const st, key = "edge.test", protocol.FeedSourcing
+	t0 := time.Date(2026, 11, 22, 9, 0, 0, 0, time.UTC)
+	f := newFeedState()
+	f.compare(st, key, "A", "", t0)
+	for i := 1; i <= 5; i++ {
+		at := t0.Add(time.Duration(i) * 3 * time.Minute)
+		f.recordPush(st, key, "A", at.Add(-2*time.Second))
+		f.recordPush(st, key, "B", at.Add(-time.Second))
+		f.compare(st, key, "B", "A", at) // the heartbeat left between the two
+		if got := f.flagsFor(st); len(got) != 0 {
+			t.Errorf("heartbeat %d of an Edge applying every copy: flags = %v, want none", i, got)
+		}
+	}
+
+	for _, rounds := range []int{1, 3, sentKeptPin} {
+		g := newFeedState()
+		for i := 0; i < rounds; i++ {
+			g.recordPush(st, key, "A", t0)
+			g.recordPush(st, key, "B", t0)
+		}
+		g.recordPush(st, key, "A", t0)
+		for i, cur := range []string{"C", "D", "E"} {
+			g.compare(st, key, cur, "A", t0.Add(time.Duration(i+1)*time.Minute))
+		}
+		if got := g.flagsFor(st); !reflect.DeepEqual(got, []string{"sourcing not converging: sent 3 times"}) {
+			t.Errorf("frozen at A after %d rounds of A, B: flags = %v, want the flag on the third send", rounds, got)
+		}
+	}
+}
+
+// An empty quote is an Edge holding nothing: it is never one of the sends.
+func TestFeedState_AnEmptyQuoteIsNeverASend(t *testing.T) {
+	t.Parallel()
+	const st, key = "edge.test", protocol.FeedBins
+	t0 := time.Date(2026, 11, 22, 9, 0, 0, 0, time.UTC)
+	f := newFeedState()
+	for i := 0; i < 3; i++ {
+		at := t0.Add(time.Duration(i) * time.Minute)
+		f.compare(st, key, fmt.Sprintf("c%d", i), "", at)
+		f.recordPush(st, key, fmt.Sprintf("p%d", i), at.Add(time.Second))
+	}
+	if got := f.flagsFor(st); len(got) != 1 {
+		t.Errorf("three sends to an Edge quoting nothing: flags = %v, want the flag", got)
+	}
+}
+
+// A restarted Edge quotes nothing and is sent at once, inside the guard, whether
+// the copy it held came by a compare or a push; that send is then in flight.
+func TestFeedState_ARestartAfterPushesIsHealedAtOnce(t *testing.T) {
+	t.Parallel()
+	const st, key = "edge.test", protocol.FeedBins
+	t0 := time.Date(2026, 11, 22, 9, 0, 0, 0, time.UTC)
+	for _, n := range []int{1, 22, sentKeptPin, 300} {
+		f := newFeedState()
+		f.compare(st, key, "d1", "", t0)
+		pushN(f, st, key, n, t0)
+		newest := fmt.Sprintf("p%d", n)
+		if f.compare(st, key, newest, newest, t0.Add(20*time.Second)) {
+			t.Fatalf("%d pushes: sent to an Edge holding the newest", n)
+		}
+		if !f.compare(st, key, "d1", "", t0.Add(40*time.Second)) {
+			t.Errorf("%d pushes: restarted Edge quotes nothing inside the guard: want the copy at once", n)
+		}
+		if f.compare(st, key, "d1", "", t0.Add(50*time.Second)) {
+			t.Errorf("%d pushes: that copy is in flight: want it held back", n)
+		}
+		if got := f.flagsFor(st); len(got) != 0 {
+			t.Errorf("%d pushes: flags = %v after a restart, want none", n, got)
+		}
+	}
+}
+
+// Only a quote of the last send says nothing is in flight. An Edge quoting a
+// push Core sent before the compare's copy, or before a newer push, still has
+// a copy on the way: the guard holds the compare's repeat.
+func TestFeedState_ACopyInFlightIsNotSentTwice(t *testing.T) {
+	t.Parallel()
+	const st, key = "edge.test", protocol.FeedBins
+	t0 := time.Date(2026, 11, 22, 9, 0, 0, 0, time.UTC)
+
+	f := newFeedState()
+	f.recordPush(st, key, "p1", t0)
+	if !f.compare(st, key, "c1", "p0", t0.Add(time.Second)) {
+		t.Fatal("differs: want a send")
+	}
+	if f.compare(st, key, "c1", "p1", t0.Add(20*time.Second)) {
+		t.Error("quote of the push before c1, c1 in flight: want it held back")
+	}
+
+	g := newFeedState()
+	if !g.compare(st, key, "c1", "p0", t0) {
+		t.Fatal("differs: want a send")
+	}
+	pushN(g, st, key, 2, t0)
+	if g.compare(st, key, "c1", "p1", t0.Add(20*time.Second)) {
+		t.Error("quote of a push with a newer one in flight: want the guard to hold")
+	}
+}
+
+// What was last sent is still known after the Edge proved it: a push of the
+// same digest is not made, and a door compares its push with it.
+func TestFeedState_TheLastSendOutlivesItsProof(t *testing.T) {
+	t.Parallel()
+	const st, key = "edge.test", protocol.FeedBins
+	t0 := time.Date(2026, 11, 22, 9, 0, 0, 0, time.UTC)
+	for _, n := range []int{1, 22, 300} {
+		f := newFeedState()
+		pushN(f, st, key, n, t0)
+		newest, at := fmt.Sprintf("p%d", n), t0.Add(10*time.Minute)
+		f.compare(st, key, newest, newest, at)
+		if got := f.lastSent(st, key); got != newest {
+			t.Errorf("%d pushes, the newest proved: lastSent = %q, want %q", n, got, newest)
+		}
+		if got, speaks := f.lastKnown(st, key); got != newest || !speaks {
+			t.Errorf("%d pushes, the newest proved: lastKnown = %q speaks %v, want %q", n, got, speaks, newest)
+		}
+		f.recordPush(st, key, "after", at.Add(time.Second))
+		if got, _ := f.lastKnown(st, key); got != "after" {
+			t.Errorf("%d pushes, then one after the quote: lastKnown = %q, want after", n, got)
+		}
 	}
 }

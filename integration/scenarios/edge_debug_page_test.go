@@ -201,7 +201,7 @@ func newDebugRig(t *testing.T) *debugRig {
 	// the Edge's quote.
 	cells, err := catalog()
 	mustNil(t, err, "read the cell catalog")
-	r.send(protocol.SubjectEdgeRegister, &protocol.EdgeRegister{StationID: debugStation, Hostname: "debug-host",
+	r.send(protocol.SubjectEdgeRegister, &protocol.EdgeRegister{Hostname: "debug-host",
 		Instance: "inst-debug", Version: "v-test", Timezone: debugZone, SchemaVersion: db.AppliedSchemaVersion(), Catalog: cells})
 	r.eng.PublishBinWatchAtBoot(func(l *protocol.BinWatchList) error {
 		r.send(protocol.SubjectBinsWatch, l)
@@ -315,20 +315,14 @@ func (r *debugRig) answered(when string) {
 	}
 }
 
-// landingVersion is the schema version Core's landing reads for the station at
-// the line node (plantclaims.ResolveLandingAddress, the read sendLanding gates
-// on), from whichever arm addresses it.
+// landingVersion is the schema version Core holds for the station, which a
+// v0.19.0 Core's landing gated on.
 func (r *debugRig) landingVersion() int {
 	r.t.Helper()
-	addr, err := r.core.ResolveLandingAddress(r.core.DB, r.sd.LineNode.Name, 0)
-	mustNil(r.t, err, "read the landing address")
-	for _, st := range append(append(addr.Claiming, addr.Order), addr.Plant...) {
-		if st.StationID == debugStation {
-			return st.SchemaVersion
-		}
-	}
-	r.t.Fatalf("Core's landing at %s addresses %+v, not the station", r.sd.LineNode.Name, addr)
-	return 0
+	var v int
+	mustNil(r.t, r.core.QueryRow(`SELECT COALESCE(schema_version, 0) FROM edge_registry WHERE station_uid = $1`, debugStation).Scan(&v),
+		"read the station's schema version on Core")
+	return v
 }
 
 // newCarrier is a carrier in storage, and the last row of Core's outbox before
@@ -364,7 +358,7 @@ func (r *debugRig) sentToStation(mark int64) (landed, bound int) {
 
 // The page's register carries the Edge's schema version (engine SchemaVersion),
 // so the station keeps its landings. Core keeps the last register's version, and
-// a station below protocol.EdgeSchemaBinLanded gets a Bound in place of a
+// a v0.19.0 Core sends a station below v20 a Bound in place of a
 // set-down's landing and nothing for an order's final drop (service
 // BinService.sendLanding). The page's register used to carry none: Core stored
 // v0, and the station got those until its next real register, which comes at a
@@ -373,8 +367,9 @@ func TestScenario_TheDebugPagesRegisterKeepsTheStationsLandings(t *testing.T) {
 	t.Parallel()
 	r := newDebugRig(t)
 	applied := r.edgeDB.AppliedSchemaVersion()
-	if applied < protocol.EdgeSchemaBinLanded {
-		t.Fatalf("the Edge's database stands at v%d, below protocol.EdgeSchemaBinLanded (%d): no landing to keep", applied, protocol.EdgeSchemaBinLanded)
+	const v019LandingSchema = 20
+	if applied < v019LandingSchema {
+		t.Fatalf("the Edge's database stands at v%d, below a v0.19.0 Core's landings (%d): no landing to keep", applied, v019LandingSchema)
 	}
 	if got := r.landingVersion(); got != applied {
 		t.Fatalf("after the Edge's own register Core's landing reads the station at v%d, want v%d", got, applied)
@@ -417,9 +412,9 @@ func TestScenario_TheDebugPagesRegisterKeepsTheStationsLandings(t *testing.T) {
 // and may decide from its bins copy, and Core still holds the station's zone and
 // every family the Edge owns: the next heartbeat sends none of them again.
 //
-// The page used to send a heartbeat naming the station alone, which Core takes
+// The page used to send a heartbeat naming the station alone, which a v0.19.0 Core took
 // as an older Edge's (HandleEdgeHeartbeat): an ack with no ask kinds and no feed
-// confirmed, the station's watch list forgotten (binWatchFor) and its zone
+// confirmed, the station's watch list forgotten and its zone
 // blanked. On the Edge, OnCoreAck took that ack as Core's last word: every ask
 // refused and every bins decision held until the next real heartbeat, up to a
 // minute, and the watch list sent again then.

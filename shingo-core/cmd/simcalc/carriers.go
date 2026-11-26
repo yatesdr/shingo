@@ -85,13 +85,28 @@ type poolPlan struct {
 	// whole 0.45 bins/min deficit this check reported on SYN_MARKET while the
 	// plant-wide balance sat at exactly 0.00. Material was conserved; the model
 	// had lost track of which pool was holding it.
-	keeperIn  float64 // empties arriving from a level keeper or a group overflow
-	keeperOut float64 // empties leaving to one
-	// isKanban marks a pool Core holds at a declared level. Its stock is not
-	// a function of transit — the keeper sets it — so it is judged against
-	// levelWant instead of the in-flight floor.
+	keeperIn  float64 // a kanban's shortfall, arriving from its first named source
+	keeperOut float64 // the same leaving that source: in its rate and in its floor
+	// pullIn and pullOut are the plant-wide search of a keeper that names no
+	// source. They are charged to both pools' RATES and to no floor of the pool
+	// they leave: the kanban holds that transit itself (kanbanVerdict;
+	// TestKeeperPull_OneTransitWindowIsChargedOnce).
+	pullIn  float64
+	pullOut float64
+	pulls   []keeperPull
+	// isKanban marks a pool Core holds at a declared level, and sourced one that
+	// names a source. A sourced kanban's stock is judged on levelWant alone: the
+	// source carries the transit. One with no source also stands demand × transit
+	// of each type it spends, and neither may take in more than it spends.
 	isKanban  bool
+	sourced   bool
 	levelWant int
+	// byType is this pool's flows by the part's carrier type, standing its
+	// seeded empties by type, and short a kanban's spends less its returns and
+	// pull per family: below zero is surplus inflow.
+	byType   map[string]*typeFlow
+	standing map[string]int
+	short    map[string]float64
 	// isClosedLoop marks a pool that is a dedicated-loader circuit rather than a
 	// stocked zone: the same carriers go round it and none enter or leave.
 	isClosedLoop bool
@@ -225,7 +240,7 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 	pool := func(name string) *poolPlan {
 		q := p.pools[name]
 		if q == nil {
-			q = &poolPlan{name: name}
+			q = &poolPlan{name: name, byType: map[string]*typeFlow{}}
 			p.pools[name] = q
 		}
 		return q
@@ -247,13 +262,11 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 		// FLAT POSITIONS COUNT TOO, and they were invisible. A zone can hold its
 		// slots directly, with no lane between — that is the shape a KANBAN
 		//  must be in, because the save-time rules refuse a group with lanes
-		// — and the demo loop's SYN_PRESS_EMPTIES is exactly that: EIGHT POSITIONS,
-		// SIX OF THEM SEEDED, two left free (plants/master.yaml [demo], BIN-PEB-01..06 on
-		// PEB_001..006; PEB_007/008 stay open as the spare positions the
-		// pre-resolve loop needs). Walking only z.Lanes counted its slot capacity
-		// as zero and attributed its seeded empties to no pool, so the tool
-		// reported a plant short of the eight slots and six carriers it actually
-		// has, and reported the lineside kanban as holding nothing.
+		// — and the demo loop's SYN_PRESS_EMPTIES is exactly that (plants/master.yaml
+		// [demo], PEB_*). Walking only z.Lanes counted its slot capacity as zero
+		// and attributed its seeded empties to no pool, so the tool reported a
+		// plant short of slots and carriers it has, and reported the lineside
+		// kanban as holding nothing (TestFlatPositionsAreCountedAsSlots).
 		for _, s := range z.Positions {
 			slotZone[s.Name] = z.Name
 		}
@@ -344,7 +357,9 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 
 	// Count the swap points that need a carrier to be waiting on, regardless of
 	// rate — a station with a slow cadence still occupies one. Charged to the
-	// pool it DRAWS FROM, which is the one that has to have it.
+	// pool it DRAWS FROM, which is the one that has to have it, in the carrier
+	// type it waits on: an empty of another type is no empty to it.
+	view := newKanbanView(plant)
 	drawsFrom := map[string][]string{} // payload → pools its produce side spends from
 	for _, ac := range activeClaims(plant) {
 		c := ac.claim
@@ -372,6 +387,9 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 			p.producePoint++
 			if src != "" {
 				pool(src).producePoint++
+				if bt, ok := view.carrierOf(c.Payload); ok {
+					pool(src).ofType(bt).points++
+				}
 			}
 		}
 		if src != "" {
@@ -402,6 +420,7 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 	flows := walkClaims(plant, rate)
 	for _, name := range sortedKeys(flows) {
 		f := flows[name]
+		binType, typed := view.carrierOf(name)
 		cap := float64(f.uopCap)
 		if cap <= 0 {
 			continue
@@ -443,6 +462,9 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 				each := filled / float64(len(pools))
 				for _, q := range pools {
 					pool(q).emptyDemand += each
+					if typed {
+						pool(q).ofType(binType).spend += each
+					}
 				}
 			} else {
 				p.unpooled = appendUniq(p.unpooled, name+" (spends)")
@@ -451,38 +473,52 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 		if emptied > 0 {
 			if pools := returnsTo[name]; len(pools) > 0 {
 				each := emptied / float64(len(pools))
+				// A cart cannot keep coming back faster than the part is filled
+				// into one, whatever the consumer's nameplate: only that much is
+				// there for a keeper to pull.
+				back := min(filled, emptied) / float64(len(pools))
 				for _, q := range pools {
 					pool(q).emptySupply += each
+					if typed {
+						t := pool(q).ofType(binType)
+						t.free += each
+						t.back += back
+					}
 				}
 			} else {
 				p.unpooled = appendUniq(p.unpooled, name+" (frees)")
 			}
 		}
 	}
-	// ── A KANBAN DOES NOT ACCUMULATE; IT OVERFLOWS ─────────────────
+	// ── A KANBAN'S SHORTFALL MOVES; ITS SURPLUS DOES NOT ──────────────────
 	//
-	// A group named in kanbans is a LEVEL-CONTROLLED buffer, not a free
-	// pool. Core holds it at its want (level + cover, kanbans.go): a cart arriving
-	// above it goes on to the overflow zone, and a shortfall is borrowed from its
-	// sources in rank order, or from the plant at large when it names none. Either way the
-	// difference MOVES, and its counterparty is the pool the config names: the
-	// overflow for a surplus, the first source (else the overflow) for a shortfall.
+	// A group named in kanbans is a LEVEL-CONTROLLED buffer, not a free pool.
+	// Core fetches what its loop has lost, and lands every cart the loop sends
+	// back whatever the level (dispatch/plan/push.go). So:
 	//
-	// Modelling the group as closed strands that difference. The demo loop's
-	// SYN_PRESS_EMPTIES takes 0.60 bins/min back from the ASSY unloader and gives
-	// 0.40 to the two presses; the 0.20 surplus does not pile up forever in eight
-	// positions declared to hold six. It overflows to SYN_MARKET — the same
-	// SYN_MARKET this check was reporting a deficit on.
+	//   surplus      fills it: a kanban has no overflow (store.SaveKanban). Judged on
+	//                the kanban, per family (TestLevelKept_SurplusInflowFails).
+	//   shortfall, a source named
+	//                the whole of it is charged to the first source, in that pool's
+	//                rate AND floor (TestComputeCarriers_AShortfallSettlesAgainstTheFirstSource).
+	//   shortfall, no source named
+	//                the keeper searches the plant (bins.EmptyFence): a pull from the
+	//                pools where that type really comes back, never more than does,
+	//                in both pools' rates (keeperPulls; TestKeeperPull_DoesNotHideADeficit).
+	//                It adds nothing to the lender's floor: the kanban itself stands
+	//                demand × transit, so that window is charged there, once
+	//                (TestKeeperPull_OneTransitWindowIsChargedOnce).
 	//
-	// The group's own rate is therefore not a verdict. Absorbing that difference
-	// is exactly what the keeper is for, so a group in rate deficit is a group
-	// doing its job. What CAN go wrong is the pool behind it running out, and
-	// that now lands there, where it belongs and where it can be seeded.
-	view := newKanbanView(plant)
+	// This block used to send a kanban's surplus to an overflow zone. The demo's
+	// press empties took in three carriers for one drawn and read "level-kept"
+	// until they stood full.
 	active := view.activeStyles()
 	for _, g := range plant.Kanbans {
 		q := pool(g.Group)
 		q.isKanban = true
+		q.sourced = len(g.Sources) > 0
+		q.standing = view.seeded[g.Group]
+		q.short = view.familyShort(q)
 		for _, l := range view.lines(g, active) {
 			// What the kanban itself must stand: the line's cover is on the line.
 			q.levelWant += max(0, l.want-l.held)
@@ -491,16 +527,19 @@ func computeCarriers(plant *plantspec.Plant, rate map[string]float64, loaderCap,
 		// the difference runs leaves it unattributed: putting the number against a
 		// pool the config never paired it with is how this check got its last
 		// wrong answer.
-		if net := q.emptySupply - q.emptyDemand; net < 0 && len(g.Sources) > 0 {
+		if net := q.emptySupply - q.emptyDemand; net < 0 && q.sourced {
 			o := pool(g.Sources[0])
 			q.keeperIn += -net
 			o.keeperOut += -net
+			o.typedKeeperOut(q, -net)
 		}
 	}
 
 	for name := range p.pools {
 		p.pools[name].isZone = isZone[name]
+		p.pools[name].standing = view.seeded[name]
 	}
+	view.keeperPulls(p.pools)
 	return p
 }
 
@@ -660,14 +699,14 @@ func reportStockFloor(plan carrierPlan, mins float64) bool {
 	fmt.Println(strings.Repeat("─", 84))
 	for _, q := range sortedPools(plan.pools) {
 		// SPENDS and FREES are what the swap points do; KEEPER is what crosses the
-		// pool boundary on top of that — a kanban's overflow, or the
-		// keeper's ask coming the other way. The balance is judged on the sum,
-		// because a pool that gives away its surplus is not in surplus.
-		spends := q.emptyDemand + q.keeperOut
-		frees := q.emptySupply + q.keeperIn
-		keeper := q.keeperIn - q.keeperOut
+		// pool boundary on top of that — a kanban's shortfall, from its named
+		// source or by the pull. The balance is judged on the sum. The floor
+		// counts a named source's keeperOut and no pull (poolPlan.pullOut says why).
+		spends := q.emptyDemand + q.keeperOut + q.pullOut
+		frees := q.emptySupply + q.keeperIn + q.pullIn
+		keeper := q.keeperIn - q.keeperOut + q.pullIn - q.pullOut
 
-		pInFlight := spends * mins
+		pInFlight := (q.emptyDemand + q.keeperOut) * mins
 		pFloor := int(math.Ceil(pInFlight)) + q.producePoint
 		verdict := "ok"
 		switch {
@@ -681,28 +720,24 @@ func reportStockFloor(plan carrierPlan, mins float64) bool {
 			verdict = "closed circuit — carriers conserved, no floor applies"
 			pFloor = 0
 		case q.isKanban:
-			// A LEVEL IS NOT A FLOOR. Core holds this pool at its declared want,
-			// so what it needs seeded is that want — not demand x transit, which
-			// describes a pool nobody is topping up. Judging a kept group on the
-			// transit floor asks it to carry stock the keeper exists to deliver.
+			// A LEVEL IS NOT A FLOOR, so REQUIRED is the want. The transit floor of
+			// a kanban with no source is per type, and is in its verdict.
 			pFloor = q.levelWant
-			if q.isZone && q.seededEmpty < pFloor {
-				ok = false
-				verdict = fmt.Sprintf("BELOW LEVEL by %d — the keeper starts behind", pFloor-q.seededEmpty)
-			} else {
-				verdict = fmt.Sprintf("level-kept (want %d)", q.levelWant)
-			}
+			var holds bool
+			verdict, holds = q.kanbanVerdict(mins)
+			ok = ok && holds
 		case !q.isZone:
 			// The pool names something that is not a seeded zone (a concrete node,
 			// a dedicated home). We cannot count its stock, so we do not judge it —
 			// and we say so rather than scoring it 0 and crying wolf.
 			verdict = "not a seeded zone — stock not judged"
-		case frees-spends < -0.001:
-			ok = false
-			verdict = fmt.Sprintf("RATE DEFICIT %.2f/min — drains regardless of size", spends-frees)
-		case q.seededEmpty < pFloor:
-			ok = false
-			verdict = fmt.Sprintf("SHORT BY %d", pFloor-q.seededEmpty)
+		default:
+			// BY CARRIER TYPE, because an empty of one type is no empty of another:
+			// summed, SYN_MARKET's 5 STANDARD-SM stood in for the 4 STANDARD it was
+			// short (TestPlainPoolFloor_ByType). REQUIRED is the types' sum.
+			var holds bool
+			verdict, pFloor, holds = q.plainVerdict(mins, frees-spends)
+			ok = ok && holds
 		}
 		keeperCol := "—"
 		if math.Abs(keeper) > 0.001 {
@@ -715,16 +750,17 @@ func reportStockFloor(plan carrierPlan, mins float64) bool {
 		fmt.Printf("  %-18s %-8.2f %-8.2f %-8s %-9s %-8s %s\n",
 			q.name, spends, frees, keeperCol, floorCol, seededCol, verdict)
 	}
+	reportPulls(sortedPools(plan.pools))
 	if len(plan.unpooled) > 0 {
 		fmt.Printf("\n  NOT ATTRIBUTED: %s — these payloads' claims name no inbound_source /\n",
 			strings.Join(plan.unpooled, ", "))
 		fmt.Printf("  outbound_destination, so their carriers belong to no pool this can check.\n")
 	}
-	fmt.Printf("\n  KEEPER is carriers crossing a pool boundary outside the swap points: a\n")
-	fmt.Printf("  kanban sends its surplus to the overflow zone and asks the plant\n")
-	fmt.Printf("  for its shortfall, so the two pools settle against each other rather than\n")
-	fmt.Printf("  one draining while the other piles up. Without this term SYN_PRESS_EMPTIES\n")
-	fmt.Printf("  read +0.20/min forever and SYN_MARKET wore the matching deficit.\n")
+	fmt.Printf("\n  KEEPER is carriers crossing a pool boundary outside the swap points: the\n")
+	fmt.Printf("  shortfall of a kanban, from its first named source or, naming none, pulled\n")
+	fmt.Printf("  from where that type comes back. A kanban has no overflow: what comes back\n")
+	fmt.Printf("  past what it spends fails it. Every floor is by carrier type: REQUIRED and\n")
+	fmt.Printf("  SEEDED are the sums, and a verdict names the type that is short.\n")
 	fmt.Printf("\n  A pool short here deadlocks EVEN IF the plant total is comfortable: the\n")
 	fmt.Printf("  empties exist, in the wrong zone, and nothing routes them back. That is how\n")
 	fmt.Printf("  lane-stress passed at 24/22 and wedged with 15 empties in SYN_COMP and 0 in\n")

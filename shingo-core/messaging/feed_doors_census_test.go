@@ -45,13 +45,13 @@ import (
 // (buildNodeList, buildScene, buildCatalog and the reads they make).
 var feedWriteSQL = regexp.MustCompile(`\b(INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(nodes|node_stations|kanban_levels|` +
 	`bin_loaders|bin_loader_homes|bin_loader_payloads|edge_registry|payload_bin_types|bin_types|carrier_families|` +
-	`payloads|payload_manifest|parts|scene_points|scene_edges)\b`)
+	`payloads|payload_manifest|parts|scene_points|scene_edges|style_claims|process_styles)\b`)
 
 // noteFeedCall notes what the change doors census reads of one call: a door,
 // and a method called on a store-shaped receiver.
 func (cf *censusFunc) noteFeedCall(s *ast.SelectorExpr) {
 	switch s.Sel.Name {
-	case "FeedsChangedPlantWide", "FeedsChangedAt":
+	case "FeedsChangedPlantWide", "FeedsChangedAt", "FeedsChanged": // the doors, and their body inside messaging
 		cf.door = true
 	}
 	storeShaped := false
@@ -125,10 +125,17 @@ var feedSites = map[string]string{
 	"store/payloads:replaceManifestTx":  "",
 	"store/payloads:setBinTypesTx":      "",
 	"store/payloads:updateRow":          "",
-	// An Edge's name: a loader that names the Edge carries it.
+	// The claims mirror: the nodes other stations' lists mark as claimed.
+	"store/plantclaims:ReplaceProcessFromStation": "",
+	"store/plantclaims:deleteClaims":              "",
+	"store/plantclaims:WipeAll":                   "",
+	"store/plantclaims:deleteStyles":              "",
+	"store/plantclaims:RemoveStation":             "",
+	// An Edge's name: a loader that names the Edge, and a node it claims, carry it.
 	"store/registry:Claim":          "",
 	"store/registry:Enroll":         "",
 	"store/registry:SetDisplayName": "",
+	"store/registry:RemoveStale":    "",
 	// The scene.
 	"store/scene:ReplaceArea": "",
 	"store/scene:Upsert":      "",
@@ -156,9 +163,10 @@ var feedSites = map[string]string{
 	"store/bins:SetFamilyKeys":      "a family's lift and wait keys, which the node list does not carry",
 	// A loader's config generation and stamp.
 	"store/loaders:bumpGen": "a loader's config_gen and updated_at, which the node list does not carry",
-	// The Edge registry's own columns: only station_uid and display_name are read, by a loader naming an Edge.
+	// The Edge registry's own columns: only station_uid and display_name are read, by a loader naming an Edge
+	// and a node one claims.
 	"store/registry:AddTickRejected": "an Edge's rejected-tick count, which no feed reads",
-	"store/registry:Introduce":       "an Edge's row with no display name: a loader naming it carries no name, as for no row",
+	"store/registry:Introduce":       "an Edge's row with no display name: a loader naming it carries no name and a node it claims the uid, as for no row",
 	"store/registry:MarkStale":       "an Edge's status, which no feed reads",
 	"store/registry:Rebind":          "an Edge's bound host, which no feed reads",
 	"store/registry:Register":        "an Edge's host, version, zone and status, which no feed reads",
@@ -173,6 +181,8 @@ var feedSites = map[string]string{
 // feedWriters is every function outside the store packages that writes what a
 // feed reads through the store, and how it reaches a door.
 var feedWriters = map[string]censusNode{
+	// A claims report: the other stations' lists mark the nodes it claims.
+	"messaging:CoreDataService.HandlePlantClaims": {push: pushDoor, via: "messaging:CoreDataService.claimedNodesMoved"},
 	// Payloads: every write ends in payloadsWritten.
 	"service:PayloadService.Create":             {push: pushDoor, via: "service:PayloadService.payloadsWritten"},
 	"service:PayloadService.CreateFromFloor":    {push: pushDoor, via: "service:PayloadService.payloadsWritten"},
@@ -205,6 +215,8 @@ var feedWriters = map[string]censusNode{
 	"service:NodeService.ClaimEdge":  {push: pushDoor},
 	"service:NodeService.EnrollEdge": {push: pushDoor},
 	"service:NodeService.RenameEdge": {push: pushDoor},
+	// A removed station: the nodes it claimed are no longer marked.
+	"service:NodeService.RemoveEdge": {push: pushDoor},
 
 	// Loaders: every write ends in rederive, which goes through the door.
 	"service:LoaderService.CreateLoader":   {push: pushDoor, via: "service:LoaderService.rederive"},

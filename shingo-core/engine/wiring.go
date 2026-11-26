@@ -297,8 +297,8 @@ func (e *Engine) wireEventHandlers() {
 		// NO RETURN IS ATTEMPTED HERE. A bin still on the robot's deck after a
 		// cancel goes back to where it is sourced from through the carried-bin
 		// watch (engine/cancel_return.go), not this handler: a cancel can be
-		// emitted under the fulfillment scanner's lock, and a lane-held return
-		// runs a synchronous scanner pass. A failed order's bin is not returned.
+		// emitted under the fulfillment scanner's lock, and the return's door
+		// takes a lock that ranks outside it. A failed order's bin is not returned.
 		// (An earlier auto-return here minted a plain store order; it never
 		// completed in production and was removed with the plain-store family.)
 
@@ -458,15 +458,16 @@ func (e *Engine) wireEventHandlers() {
 
 	// ── Fulfillment scanner triggers ────────────────────────────────
 	// Async trigger for high-volume signals (bin moves, order
-	// completions). The scanner coalesces overlapping triggers via
-	// its `pending` flag; a goroutine here keeps the emitting handler
-	// chain non-blocking. Subscribes to several event types whose
-	// payloads differ; stays on the untyped SubscribeTypes form
-	// because the trigger doesn't read the payload.
+	// completions). It only wakes the scanner's one worker
+	// (fulfillment.Scanner.Trigger: a one-slot wake that never waits and takes
+	// no lock), so a burst during a pass makes one more pass and the emitting
+	// handler chain never blocks (TestScanWorker_NTriggersDuringAPassMakeOneMorePass).
+	// Emitters emit after their write commits, so that pass reads it.
+	// Subscribes to several event types whose payloads differ; stays on the
+	// untyped SubscribeTypes form because the trigger doesn't read the payload.
 	triggerFulfillment := func(Event) {
 		if e.fulfillment != nil {
 			e.fulfillment.Trigger()
-			e.loops.spawn(func() { e.fulfillment.RunOnce() })
 		}
 	}
 	e.Events.SubscribeTypes(triggerFulfillment, EventBinUpdated)

@@ -27,7 +27,7 @@ var rtBucketDoors = []struct {
 	drive func(r *rtRig)
 }{
 	{"delta", true, func(r *rtRig) { r.delta() }},
-	{"bucket", true, func(r *rtRig) { r.m.OnBucketApplied(r.b.payloadCode) }},
+	{"bucket", true, func(r *rtRig) { r.m.OnBucketApplied(r.b.payloadCode); r.eng.after.settle() }},
 	{"manual_swap", true, func(r *rtRig) { r.m.NoteSwapRequestContradiction(r.b.payloadCode) }},
 	{"startup_sweep", false, func(r *rtRig) { r.boot() }},
 	{"resync", false, func(r *rtRig) { r.m.Resync(r.b.stationID) }},

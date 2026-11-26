@@ -249,12 +249,15 @@ var latestMigrationVersion = func() int {
 // hand-maintained constant), so it can never drift from them.
 func LatestMigrationVersion() int { return latestMigrationVersion }
 
-// CheckDatabase is `shingocore migrate check`: what a boot of this build would
-// do to the database cfg names, found without writing anything (no
+// CheckDatabase is `shingocore migrate check`: whether this build may be
+// installed on the database cfg names, found without writing anything (no
 // schema_migrations is created either). cur is the newest version recorded, 0
 // for an empty database that would be born on the baseline; target is
-// LatestMigrationVersion. A *Refusal is the refusal migrate would give; any
-// other error is a failure to reach or read the database.
+// LatestMigrationVersion. A *Refusal is the refusal migrate would give, or one
+// of the check's own that the boot does not make: versions recorded and
+// shipped tables absent, a restore that skipped them (checkTablesThere). The
+// boot's drift report names those and refuses nothing. Any other error is a
+// failure to reach or read the database.
 func CheckDatabase(cfg *config.DatabaseConfig) (cur, target int, err error) {
 	db, err := OpenWithoutMigrate(cfg)
 	if err != nil {
@@ -269,8 +272,48 @@ func CheckDatabase(cfg *config.DatabaseConfig) (cur, target int, err error) {
 		if err := db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&cur); err != nil {
 			return 0, 0, fmt.Errorf("read schema_migrations: %w", err)
 		}
+		if err := checkTablesThere(db.DB, cur); err != nil {
+			return 0, 0, err
+		}
 	}
 	return cur, LatestMigrationVersion(), nil
+}
+
+// checkTablesThere refuses a database whose schema_migrations is whole and
+// which lacks a table of the shipped snapshot, naming the tables and the
+// server's version. pg_restore skips a table whose options the server rejects
+// and keeps the rest, schema_migrations with it: a dump from a minor with the
+// 2026-11-12 fix carries pg_attver column options an older one rejects.
+//
+// Every shipped table is required at every version this build takes, because
+// no migration above RetiredChain creates one
+// (TestSchemaConvergesAcrossVintages asks check of each vintage it walks up).
+func checkTablesThere(q *sql.DB, cur int) error {
+	shipped, err := snapshotObjects(schema.Snapshot)
+	if err != nil {
+		return err
+	}
+	var names []string
+	for key := range shipped {
+		if t, ok := strings.CutPrefix(key, "table "); ok {
+			names = append(names, t)
+		}
+	}
+	var missing, server string
+	if err := q.QueryRow(`SELECT COALESCE(string_agg(t, ', ' ORDER BY t), ''), split_part(current_setting('server_version'), ' ', 1)
+		  FROM unnest(string_to_array($1, ',')) AS t
+		 WHERE NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		                    WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND c.relname = t)`,
+		strings.Join(names, ",")).Scan(&missing, &server); err != nil {
+		return fmt.Errorf("read the tables that are there: %w", err)
+	}
+	if missing == "" {
+		return nil
+	}
+	return &Refusal{fmt.Sprintf("schema_migrations says v%d and tables Core ships are missing: %s (PostgreSQL %s): "+
+		"a restore skipped them. Restore the whole dump again, stopping on the first error; a dump with pg_attver column options "+
+		"needs PostgreSQL 14.25, 15.20, 16.16, 17.12, 18.7 or a later minor of those; Core changed nothing",
+		cur, missing, server)}
 }
 
 // MigrateDown is `shingocore migrate down N`: the down step of migration N,

@@ -26,24 +26,13 @@ import (
 // newer than the move's (adj.PlacedSeq): the carrier landed there again.
 // NewRemaining is ignored in that case.
 //
-// When adj.Bound is set, an older Core moved a bin ONTO this node: an admin
-// Move, or a mid-order set-down (wiring_block_completed), sent as a Bound
-// after the commit. A Core that sends landings sends a Bound only to a
-// station too old for them (Lane H, H.7), so on this Edge a Bound is an older
-// Core's landing, and it binds through the landing verb with no placement
-// stamp (bindAdjustmentFromCore). That bind keeps the count of the same bin
-// already bound at an equal or newer generation (H.4) and refuses the
-// carrier that last left an empty slot at a newer generation. It may replace
-// a different carrier: Core's Move refused a destination that held another
-// bin, so the bound one is stale.
+// A CARRIER CORE PLACED IS BOUND BY ITS LANDING, never by this message. A
+// v0.19.0 Core sends an adjustment with a bound key only to a station whose
+// registered schema it could not read; the key is ignored here, so that
+// message is a count like any other
+// (TestFloorWire_AV019CoresBoundIsACountHere).
 //
-// THIS COMMENT USED TO SAY the Bound was the admin Move's only, that it ran
-// ahead of every guard because "Core's Move already refused the relocation",
-// and that any stale pointer was safe to overwrite. The mid-order set-down
-// sent it too (since 75643f9), and the overwrite wrote Core's count over the
-// ticks the line had counted on the same carrier (DESIGN-H §1 A1, §2).
-//
-// A plain count correction (neither Bound nor Released) addressed to a node
+// A plain count correction (not Released) addressed to a node
 // with NO bin bound also binds: the carrier is staged there and Edge never
 // bound it (the SNF3 detachment). Rather than throwing the correction away as
 // stale, Edge seeds the runtime with the corrected value + adj.Epoch so the bin
@@ -56,11 +45,6 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 	node, err := e.db.GetProcessNodeByCoreNodeName(adj.CoreNodeName)
 	if err != nil || node == nil {
 		log.Printf("uop_adjustment: process node %q not found: %v", adj.CoreNodeName, err)
-		return
-	}
-
-	if adj.Bound {
-		e.bindAdjustmentFromCore(node, adj)
 		return
 	}
 
@@ -116,7 +100,7 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 		// The node has no bin bound but Core is correcting THIS bin's count for
 		// THIS node — i.e. the carrier is staged here and Edge never bound it (the
 		// SNF3 detachment: a delivered bin whose ticks stranded). Bind it with the
-		// corrected value via the same machinery the Bound=true path uses, so its
+		// corrected value so its
 		// PLC ticks resume against the right count and epoch. This is the front
 		// door that repairs a wrong tile — required per §4b-6. (A Released
 		// correction on an already-unbound node has nothing to clear; it falls
@@ -158,7 +142,7 @@ func (e *Engine) HandleUOPAdjustment(adj protocol.UOPAdjustment) {
 		}
 		log.Printf("uop_adjustment: bound staged bin %d to node %s via count correction (remaining=%d epoch=%d)",
 			adj.BinID, adj.CoreNodeName, adj.NewRemaining, adj.Epoch)
-		// Same identity hand-off as the Bound arm: a count binds a carrier whose
+		// The identity hand-off: a count binds a carrier whose
 		// payload its envelope does not carry, so the bind's doorway records the
 		// part the position's active claim names, assumed (recordBoundCarrier),
 		// over whatever the slot said before. A person's load or clear names it
@@ -369,20 +353,4 @@ func (e *Engine) recordDeclaredPart(node *processes.Node, adj protocol.UOPAdjust
 	}
 	e.recordLinesideCarrier(node.ID, node.CoreNodeName,
 		domain.KnownCarrier(domain.LinesidePayloadCode(adj.PayloadCode)), domain.CarrierFromOperator)
-}
-
-// bindAdjustmentFromCore is HandleUOPAdjustment's Bound arm: an older Core
-// placed a bin onto this node, and it binds through the landing verb with no
-// placement stamp, as a displacing bind (Lane H, H.7; see the handler's
-// header). The Bound carries no payload, so the identity is not known: whatever
-// the slot said of the previous occupant would be a confident wrong answer
-// about this one, and the landing verb records the position's claim's part,
-// assumed (recordBoundCarrier). It settles the placement (leg_departure.go).
-//
-// For one release; it goes on the cleanup sweep row with the delivered bind
-// fields.
-func (e *Engine) bindAdjustmentFromCore(node *processes.Node, adj protocol.UOPAdjustment) {
-	e.landCarrier(node, processes.LandingBind{
-		BinID: adj.BinID, Epoch: adj.Epoch, Count: adj.NewRemaining, MayDisplace: true,
-	}, domain.UnknownCarrier(), domain.CarrierFromLanding, "an older Core's Bound, actor "+adj.Actor, holdDropByLanding)
 }

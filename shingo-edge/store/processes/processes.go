@@ -1126,19 +1126,14 @@ func BindEmptySlotUnlessDeparted(db DBTX, processNodeID int64, activeClaimID *in
 // LandingBind is one landing's bind (Lane H, H.4): the carrier Core placed at
 // this seat, its count and generation, and its placement stamp.
 //
-// PlacedSeq nil is a bind with no stamp: an older Core's Bound or delivered
-// routed through the landing verb for one release (H.7). MayDisplace says
-// whether such an unstamped bind may replace a DIFFERENT carrier bound here:
-// true for the Bound (Core's move refused a destination that held another bin,
-// so the bound one is stale), false for the delivered (a delivered names the
-// order's carrier, not the seat's; it binds only into an empty slot or onto
-// the same bin). A stamped landing ignores it: the stamp decides.
+// PlacedSeq nil is a bind with no stamp: it lands only into an empty slot or
+// onto the same bin, never over a different carrier. A stamped landing ignores
+// that: the stamp decides.
 type LandingBind struct {
-	BinID       int64
-	Epoch       int64
-	Count       int
-	PlacedSeq   *int64
-	MayDisplace bool
+	BinID     int64
+	Epoch     int64
+	Count     int
+	PlacedSeq *int64
 }
 
 // BindLanding is THE landing bind (Lane H, H.4; DECISIONS D10): one statement
@@ -1154,7 +1149,7 @@ type LandingBind struct {
 //     one-deep last_bin memory and the generation cannot see those;
 //   - the carrier that last left this empty slot at a newer generation (the
 //     departed guard, kept for the unstamped binds);
-//   - an unstamped bind that may not displace, onto a different carrier.
+//   - an unstamped bind onto a different carrier.
 //
 // Landed: the pointer and the generation (epochAssignOnBind, forward only for
 // the same bin), and placed_seq when stamped. THE SAME BIN ALREADY BOUND AT AN
@@ -1183,10 +1178,6 @@ func BindLanding(db DBTX, processNodeID int64, l LandingBind) (landed, activePul
 	if l.PlacedSeq != nil {
 		seq = *l.PlacedSeq
 	}
-	mayDisplace := 0
-	if l.MayDisplace {
-		mayDisplace = 1
-	}
 	args := []any{
 		// released_empty: kept with the kept count, else releasedEmptyOnBind.
 		l.BinID, l.Epoch, l.BinID, l.Count,
@@ -1200,7 +1191,7 @@ func BindLanding(db DBTX, processNodeID int64, l LandingBind) (landed, activePul
 	args = append(args, seq, seq,
 		processNodeID,
 		seq, seq,
-		seq, mayDisplace, l.BinID,
+		seq, l.BinID,
 		l.BinID, l.Epoch)
 	err = db.QueryRow(`UPDATE process_node_runtime_states SET
 		released_empty=CASE WHEN active_bin_id IS ? AND active_bin_epoch >= ? THEN released_empty
@@ -1212,7 +1203,7 @@ func BindLanding(db DBTX, processNodeID int64, l LandingBind) (landed, activePul
 		updated_at=datetime('now')
 		WHERE process_node_id=?
 		  AND (? IS NULL OR placed_seq IS NULL OR placed_seq < ?)
-		  AND (? IS NOT NULL OR ? = 1 OR active_bin_id IS NULL OR active_bin_id = ?)
+		  AND (? IS NOT NULL OR active_bin_id IS NULL OR active_bin_id = ?)
 		  AND NOT (active_bin_id IS NULL AND last_bin_id IS ? AND last_bin_epoch > ?)
 		RETURNING active_pull`, args...).Scan(&activePull)
 	if errors.Is(err, sql.ErrNoRows) {

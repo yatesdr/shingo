@@ -1,7 +1,7 @@
 // Command schemasnapshot writes shingo-edge's committed schema snapshot.
 //
-// It creates an empty SQLite database, runs the FULL production migrate path
-// against it, reads sqlite_master, and writes the result to
+// It creates an empty SQLite database, opens it as an Edge's start does (born
+// on the baseline), reads sqlite_master, and writes the result to
 // store/schema/schema.snapshot.sql.
 //
 // No Docker and no external tools — SQLite is a file. Run via
@@ -30,7 +30,7 @@ func run() error {
 	}
 	defer os.RemoveAll(dir)
 
-	fmt.Fprintf(os.Stderr, "schemasnapshot: running migrations...\n")
+	fmt.Fprintf(os.Stderr, "schemasnapshot: opening a new database...\n")
 	path, err := schemadump.BuildFresh(dir)
 	if err != nil {
 		return err

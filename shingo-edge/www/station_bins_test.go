@@ -526,12 +526,12 @@ func TestSSE_NodeBinsEventIsSentAsBins(t *testing.T) {
 // versions of the node-bins feed. The bins are the copy's and nothing else's,
 // so no build calls Core:
 //
-//   - a Core with no feeds, or feeds and no BinWatch: nothing published, the
+//   - a Core with no feeds, or feeds and no bins.watch answer: nothing published, the
 //     bins not known (CHANGED: they were read over HTTP);
 //   - a Core serving the feed: the first ack publishes the watch list, and
 //     until the snapshot arrives the bins are not known; once applied (one
 //     round trip after the first ack) the view is stamped from the copy;
-//   - Core rolled back under the running Edge: the next ack lacks the field,
+//   - Core rolled back under the running Edge: the next ack lacks the family,
 //     and the copy held is drawn still (CHANGED: the build read HTTP).
 func TestStationView_BinsFromTheCopyOnly(t *testing.T) {
 	t.Parallel()
@@ -556,13 +556,13 @@ func TestStationView_BinsFromTheCopyOnly(t *testing.T) {
 	rig.eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}})
 	v, calls = build()
 	if len(calls) != 0 || jsonOf(t, v["bins"]) != `{"known":false}` || len(published) != 0 {
-		t.Errorf("feeds, no BinWatch: calls %s bins %s published %d", jsonOf(t, calls), jsonOf(t, v["bins"]), len(published))
+		t.Errorf("feeds, no bins.watch answer: calls %s bins %s published %d", jsonOf(t, calls), jsonOf(t, v["bins"]), len(published))
 	}
 
-	empty := ""
-	rig.eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, BinWatch: &empty})
+	rig.eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Owned: map[string]protocol.OwnedAnswer{
+		protocol.OwnedBinWatch: {Digest: "core-holds-no-list"}}})
 	if len(published) != 1 {
-		t.Fatalf("the first ack carrying BinWatch published %d envelopes, want the watch list", len(published))
+		t.Fatalf("the first ack answering bins.watch published %d envelopes, want the watch list", len(published))
 	}
 	v, calls = build()
 	h1 := tileByNode(t, v, "SMN_H1")
@@ -716,8 +716,8 @@ func TestStationView_AssignmentsAndHeightsFromTheCopy(t *testing.T) {
 		t.Errorf("no copy: an assignment %s", jsonOf(t, a))
 	}
 
-	empty := ""
-	rig.eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, BinWatch: &empty})
+	rig.eng.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Owned: map[string]protocol.OwnedAnswer{
+		protocol.OwnedBinWatch: {Digest: "core-holds-no-list"}}})
 	snap := protocol.NodeBinsSnapshot{Rows: []protocol.NodeBinsRow{
 		{Node: "E1", Occupied: true, BinID: 5, BinTypeCode: "TOTE-1", TotesOnCart: n(24), TotesPerLayer: n(8)},
 		{Node: "E2"},

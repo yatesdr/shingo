@@ -1,6 +1,7 @@
 package resend
 
 import (
+	"strconv"
 	"testing"
 	"time"
 )
@@ -36,15 +37,15 @@ func TestRecord_GuardStreakAndConverge(t *testing.T) {
 	if !r.NotConverging() {
 		t.Error("three sends in a row: want not converging")
 	}
-	if r.IsLast("d1") || !r.IsLast("d2") {
-		t.Error("IsLast: want d2 only")
-	}
 	if d, at := r.Last(); d != "d2" || !at.Equal(t0.Add(Guard+time.Second)) {
 		t.Errorf("Last = %s at %v", d, at)
 	}
 	r.Converged()
 	if r.Streak() != 0 || r.NotConverging() {
 		t.Errorf("after Converged: streak %d", r.Streak())
+	}
+	if r.Quoted("d1") || !r.Quoted("d2") {
+		t.Error("Quoted after Converged: want d2, the newest send, only")
 	}
 }
 
@@ -87,5 +88,71 @@ func TestRecord_AForgottenSendGoesAtOnce(t *testing.T) {
 	}
 	if !s.NotConverging() {
 		t.Errorf("three sends never quoted back: streak %d, want the not-converging flag", s.Streak())
+	}
+}
+
+// A quote proves one send made since the last one proved, by either path, and
+// what preceded it: at every position of the kept sends once, past the bound
+// and for an empty quote never. The newest send outlives its proof.
+func TestRecord_AQuoteProvesOneSendAndWhatPrecededIt(t *testing.T) {
+	t.Parallel()
+	if sentKept != 256 {
+		t.Fatalf("sentKept = %d, want 256, which the Core and Edge pins assume", sentKept)
+	}
+	t0 := time.Date(2026, 11, 22, 9, 0, 0, 0, time.UTC)
+	name := func(i int) string { return "p" + strconv.Itoa(i) }
+	for _, n := range []int{1, 2, 22, sentKept, sentKept + 1, 300} {
+		for p := 0; p <= n; p++ {
+			var r Record
+			for i := 1; i <= n; i++ {
+				r.Pushed(name(i), t0.Add(time.Duration(i)*time.Second))
+			}
+			quote := ""
+			if p > 0 {
+				quote = name(p)
+			}
+			want := p > 0 && p > n-sentKept
+			if got := r.Quoted(quote); got != want {
+				t.Fatalf("%d sends, quote of %d: proved %v, want %v", n, p, got, want)
+			}
+			if r.Quoted(quote) {
+				t.Fatalf("%d sends, quote of %d again: proved twice", n, p)
+			}
+			if p > 1 && want && r.Quoted(name(p-1)) {
+				t.Fatalf("%d sends, %d proved: the older %d still proves", n, p, p-1)
+			}
+			if d, at := r.Last(); d != name(n) || !at.Equal(t0.Add(time.Duration(n)*time.Second)) {
+				t.Fatalf("%d sends, quote of %d: Last = %s at %v, want the newest", n, p, d, at)
+			}
+		}
+	}
+}
+
+// A push is neither counted in the streak nor held back by the guard, and only
+// a quote of the last send, not of an older one, makes a repeat a lost copy.
+func TestRecord_APushLeavesTheGuardAndTheStreakAlone(t *testing.T) {
+	t.Parallel()
+	t0 := time.Date(2026, 11, 22, 9, 0, 0, 0, time.UTC)
+	var r Record
+	for _, d := range []string{"p1", "p2", "p3"} {
+		r.Pushed(d, t0)
+	}
+	if r.Streak() != 0 || r.NotConverging() {
+		t.Errorf("after three pushes: streak %d, want 0", r.Streak())
+	}
+	if !r.Send("p3", "", t0.Add(time.Second)) || r.Streak() != 1 {
+		t.Errorf("the pushed digest inside the guard: want it sent as the streak's first, streak %d", r.Streak())
+	}
+	if !r.Quoted("p1") {
+		t.Fatal("quote of the oldest push: want it proved")
+	}
+	if r.Send("p3", "p1", t0.Add(2*time.Second)) {
+		t.Error("quote of an older copy, p3 in flight: want the guard to hold")
+	}
+	if !r.Quoted("p3") {
+		t.Fatal("quote of the last send: want it proved")
+	}
+	if !r.Send("p3", "", t0.Add(3*time.Second)) {
+		t.Error("held the last send, then quoted nothing: want it at once")
 	}
 }

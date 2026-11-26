@@ -246,7 +246,7 @@ type RuntimeState struct {
 	// generation. Persists across Edge restarts via the column on
 	// process_node_runtime_states.
 	//
-	// FOUR WRITERS: the OrderDelivered envelope, Core's answers to the LOAD,
+	// THREE WRITERS: Core's answers to the LOAD,
 	// CLEAR and count asks, Core's landing (transit.bin_landed, which a
 	// changeover cancel's reseat asks Core to re-announce), and Core's
 	// BinEpochRefresh push. The bins table carries a carrier's epoch for
@@ -1048,7 +1048,7 @@ func NegativeCountRefusal(label string, n int) string {
 
 // StrictPackApplies is the gate for the strict arm: the claim carries
 // strict_pack, is a produce claim, and has a pack (UOPCapacity, resolved from
-// the catalog on every read; the claim's uop_capacity column is dead and a
+// the catalog on every read; the claim holds no copy, since Edge v60, and a
 // produce bin's resident payload is "" for the whole fill, so neither is
 // read). The seat's active_claim_id is not read: it is NULL on a seat never
 // through a changeover, a Clear or a Record Count, which would leave the arm

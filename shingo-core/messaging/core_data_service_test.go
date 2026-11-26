@@ -240,7 +240,7 @@ func TestHeartbeatAck_CarriesTheConfiguredPlantTimezone(t *testing.T) {
 		svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
 		svc.SetPlantTimezone(configured)
 
-		svc.HandleEdgeHeartbeat(feedsPinEnv("stn-tz-test"), &protocol.EdgeHeartbeat{StationID: "stn-tz-test"})
+		svc.HandleEdgeHeartbeat(feedsPinEnv("stn-tz-test"), &protocol.EdgeHeartbeat{})
 
 		for _, r := range resp.replies {
 			if r.subject != protocol.SubjectEdgeHeartbeatAck {
@@ -282,7 +282,7 @@ func TestHeartbeatAck_CarriesTheStationsDisplayName(t *testing.T) {
 		t.Helper()
 		resp := &captureResponder{}
 		svc := NewCoreDataService(db, resp, service.EpochAnnounce{})
-		svc.HandleEdgeHeartbeat(feedsPinEnv(uid), &protocol.EdgeHeartbeat{StationID: uid})
+		svc.HandleEdgeHeartbeat(feedsPinEnv(uid), &protocol.EdgeHeartbeat{})
 		for _, r := range resp.replies {
 			if ack, ok := r.payload.(*protocol.EdgeHeartbeatAck); ok && r.subject == protocol.SubjectEdgeHeartbeatAck {
 				return ack.DisplayName
@@ -315,8 +315,8 @@ func TestHeartbeatAck_CarriesTheStationsDisplayName(t *testing.T) {
 // TestHeartbeatAck_TheOwnedMapPerFamily: a heartbeat that quotes the owned map
 // is answered per family from what Core holds of that station, the digest
 // always and the members only where it differs from the quote, and never with
-// the old Claims and BinWatch; a heartbeat with no owned map is answered by
-// the old fields alone. A family the heartbeat leaves off is not answered; one
+// a claims or bin_watch key; a heartbeat with no owned map is answered none.
+// A family the heartbeat leaves off is not answered; one
 // whose read fails is left off; a failed registry write leaves off the two
 // read from the database (claims, cells) and answers the watch list Core holds
 // in memory.
@@ -360,7 +360,7 @@ func TestHeartbeatAck_TheOwnedMapPerFamily(t *testing.T) {
 	ack := func(uid string, owned map[string]string) *protocol.EdgeHeartbeatAck {
 		t.Helper()
 		resp.events = nil
-		svc.HandleEdgeHeartbeat(feedsPinEnv(uid), &protocol.EdgeHeartbeat{StationID: uid,
+		svc.HandleEdgeHeartbeat(feedsPinEnv(uid), &protocol.EdgeHeartbeat{
 			Feeds: map[string]string{protocol.FeedBins: ""}, Owned: owned})
 		for _, e := range resp.events {
 			if a, ok := e.payload.(*protocol.EdgeHeartbeatAck); ok && e.kind == "reply" {
@@ -378,16 +378,8 @@ func TestHeartbeatAck_TheOwnedMapPerFamily(t *testing.T) {
 		sort.Strings(out)
 		return out
 	}
-	noOldFields := func(name string, a *protocol.EdgeHeartbeatAck) {
-		t.Helper()
-		if a.Claims != nil || a.BinWatch != nil {
-			t.Errorf("%s: claims %v, bin_watch %v on the ack, want neither to an Edge that quotes the owned map", name, a.Claims, a.BinWatch)
-		}
-	}
-
 	// Quoting what Core holds: each family converged, its digest alone.
 	a := ack(st, holds)
-	noOldFields("converged", a)
 	for _, f := range protocol.AllOwned() {
 		if got := a.Owned[f]; got.Digest != holds[f] || got.Members != nil {
 			t.Errorf("converged %s: answered %+v, want digest %s and no members", f, got, holds[f])
@@ -395,13 +387,12 @@ func TestHeartbeatAck_TheOwnedMapPerFamily(t *testing.T) {
 	}
 	raw, err := json.Marshal(a)
 	testutil.MustNoErr(t, err, "marshal ack")
-	if s := string(raw); !strings.Contains(s, `"claims":null`) || strings.Contains(s, `"bin_watch"`) || strings.Contains(s, `"members"`) {
-		t.Errorf("converged: the ack on the wire is %s, want claims null, no bin_watch and no members", s)
+	if s := string(raw); strings.Contains(s, `"claims":null`) || strings.Contains(s, `"bin_watch"`) || strings.Contains(s, `"members"`) {
+		t.Errorf("converged: the ack on the wire is %s, want no claims key, no bin_watch and no members", s)
 	}
 
 	// Quoting something else: the members Core holds, family by family.
 	a = ack(st, stale)
-	noOldFields("differs", a)
 	for _, f := range protocol.AllOwned() {
 		if got := a.Owned[f]; got.Digest != holds[f] || !reflect.DeepEqual(got.Members, heldMembers[f]) {
 			t.Errorf("differs %s: answered %+v, want digest %s and members %v", f, got, holds[f], heldMembers[f])
@@ -426,13 +417,9 @@ func TestHeartbeatAck_TheOwnedMapPerFamily(t *testing.T) {
 		t.Errorf("an empty owned map: answered %v, want {} (not nil)", a.Owned)
 	}
 
-	// No owned map: the old fields, as an older Edge has always been answered.
-	a = ack(st, nil)
-	if a.Owned != nil {
+	// No owned map: no answer.
+	if a = ack(st, nil); a.Owned != nil {
 		t.Errorf("no owned map: answered %v, want nil", a.Owned)
-	}
-	if !reflect.DeepEqual(a.Claims, heldMembers[protocol.OwnedClaims]) || a.BinWatch == nil || *a.BinWatch != "watch-d1" {
-		t.Errorf("no owned map: claims %v, bin_watch %v; want %v and watch-d1", a.Claims, a.BinWatch, heldMembers[protocol.OwnedClaims])
 	}
 
 	// A failed read leaves its family off; a failed registry write leaves off
@@ -524,8 +511,8 @@ func TestRegistrationAndAck_NameOnlyAVerifiedEphemeralTopic(t *testing.T) {
 		if wire {
 			svc.SetEphemeralTopic(func() string { return verified })
 		}
-		svc.HandleEdgeRegister(registerEnv(st), &protocol.EdgeRegister{StationID: st, Hostname: "h", Version: "v"})
-		svc.HandleEdgeHeartbeat(feedsPinEnv(st), &protocol.EdgeHeartbeat{StationID: st, Feeds: map[string]string{}})
+		svc.HandleEdgeRegister(registerEnv(st), &protocol.EdgeRegister{Hostname: "h", Version: "v"})
+		svc.HandleEdgeHeartbeat(feedsPinEnv(st), &protocol.EdgeHeartbeat{Feeds: map[string]string{}})
 		for _, r := range resp.replies {
 			switch p := r.payload.(type) {
 			case *protocol.EdgeRegistered:

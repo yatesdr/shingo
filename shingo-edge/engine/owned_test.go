@@ -23,7 +23,7 @@ import (
 )
 
 // owned_test.go pins the Edge-owned map (owned.go): the rows, the quote, the
-// answer from a Core that speaks the map and from an older one, the resend
+// answer from a Core that speaks the map, the resend
 // guard, the keeps (a quiet ack settles, the first ack after boot reconciles,
 // an edit moves the quote, the floor), the cell catalog, and what a quiet
 // heartbeat and a quiet ack cost.
@@ -158,10 +158,7 @@ func TestOnCoreAck_ClaimsReachThePublisherOnlyWhenSent(t *testing.T) {
 	}{
 		{"older Core: no feeds, no claims", &protocol.EdgeHeartbeatAck{}, nil},
 		{"older Core, claims unread", &protocol.EdgeHeartbeatAck{Feeds: map[string]string{}}, nil},
-		{"older Core holding none", &protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Claims: map[string]string{}}, []string{"P1:1"}},
-		{"older Core holding another digest", &protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Claims: map[string]string{"P1": "d1"}}, []string{"P1:1"}},
-		{"owned map, claims left off", &protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Owned: map[string]protocol.OwnedAnswer{},
-			Claims: map[string]string{}}, nil},
+		{"owned map, claims left off", &protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Owned: map[string]protocol.OwnedAnswer{}}, nil},
 		{"owned map, Core holding none", &protocol.EdgeHeartbeatAck{Feeds: map[string]string{},
 			Owned: map[string]protocol.OwnedAnswer{protocol.OwnedClaims: differs(nil)}}, []string{"P1:1"}},
 	}
@@ -265,9 +262,6 @@ func TestOnCoreAck_AQuietAckRunsNoStatementAndNoHash(t *testing.T) {
 				e.holdFeed(key, d, "")
 				feeds[key] = d
 			}
-			e.feeds.mu.Lock()
-			watch := e.feeds.ownedLocked(protocol.OwnedBinWatch).raw
-			e.feeds.mu.Unlock()
 			owned := map[string]protocol.OwnedAnswer{}
 			for k, d := range quote {
 				owned[k] = protocol.OwnedAnswer{Digest: d}
@@ -277,7 +271,6 @@ func TestOnCoreAck_AQuietAckRunsNoStatementAndNoHash(t *testing.T) {
 				ack  *protocol.EdgeHeartbeatAck
 			}{
 				{"owned map", &protocol.EdgeHeartbeatAck{Feeds: feeds, Owned: owned}},
-				{"older Core", &protocol.EdgeHeartbeatAck{Feeds: feeds, Claims: reports, BinWatch: &watch}},
 			}
 			for _, a := range acks {
 				e.OwnedDigests()
@@ -398,7 +391,6 @@ func TestOwned_TheFirstAckAfterBootReconciles(t *testing.T) {
 	}{
 		{"owned map", &protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Owned: map[string]protocol.OwnedAnswer{
 			protocol.OwnedClaims: {Digest: "", Members: nil}}}},
-		{"older Core", &protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Claims: map[string]string{}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -486,40 +478,35 @@ func TestOwned_AQuietAckSettlesTheClaimsFlags(t *testing.T) {
 // The same from an older Core's Claims map.
 func TestAnswerOwned_ClaimsRepublishesWhatDiffers(t *testing.T) {
 	t.Parallel()
-	for _, legacy := range []bool{false, true} {
-		t.Run(map[bool]string{false: "owned map", true: "older Core"}[legacy], func(t *testing.T) {
-			t.Parallel()
-			db := testEngineDB(t)
-			e, _ := claimsEngine(t, db)
-			seedStyledProcess(t, db, "SAME", 2)
-			seedStyledProcess(t, db, "STALE", 1)
-			seedStyledProcess(t, db, "MISSING", 1)
-			_, err := db.CreateProcess("BARE", "", "", "", false)
-			testutil.MustNoErr(t, err, "create bare process")
-			quote := e.OwnedDigests()
-			e.feeds.mu.Lock()
-			same := e.feeds.ownedLocked(protocol.OwnedClaims).members["SAME"]
-			e.feeds.mu.Unlock()
-			held := map[string]string{"SAME": same, "STALE": "0000000000000000", "BARE": "1111111111111111", "GONE": "2222222222222222"}
-			ack := &protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Owned: map[string]protocol.OwnedAnswer{
-				protocol.OwnedClaims: {Digest: ownedDigest(t, held), Members: held}}}
-			if legacy {
-				ack = &protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Claims: held}
-			}
-			if ack.Owned != nil && ack.Owned[protocol.OwnedClaims].Digest == quote[protocol.OwnedClaims] {
-				t.Fatal("fixture: Core's claims equal the quote")
-			}
-			e.OnCoreAck(ack)
-			if got, want := claimsSent(t, db), []string{"BARE:0", "GONE:0", "MISSING:1", "STALE:1"}; !reflect.DeepEqual(got, want) {
-				t.Errorf("published %v, want %v", got, want)
-			}
-			// The guard holds a repeat: the same answer again sends nothing.
-			e.OnCoreAck(ack)
-			if got := claimsSent(t, db); len(got) != 0 {
-				t.Errorf("the same answer again published %v, want each held back in flight", got)
-			}
-		})
-	}
+	t.Run("owned map", func(t *testing.T) {
+		t.Parallel()
+		db := testEngineDB(t)
+		e, _ := claimsEngine(t, db)
+		seedStyledProcess(t, db, "SAME", 2)
+		seedStyledProcess(t, db, "STALE", 1)
+		seedStyledProcess(t, db, "MISSING", 1)
+		_, err := db.CreateProcess("BARE", "", "", "", false)
+		testutil.MustNoErr(t, err, "create bare process")
+		quote := e.OwnedDigests()
+		e.feeds.mu.Lock()
+		same := e.feeds.ownedLocked(protocol.OwnedClaims).members["SAME"]
+		e.feeds.mu.Unlock()
+		held := map[string]string{"SAME": same, "STALE": "0000000000000000", "BARE": "1111111111111111", "GONE": "2222222222222222"}
+		ack := &protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Owned: map[string]protocol.OwnedAnswer{
+			protocol.OwnedClaims: {Digest: ownedDigest(t, held), Members: held}}}
+		if ack.Owned[protocol.OwnedClaims].Digest == quote[protocol.OwnedClaims] {
+			t.Fatal("fixture: Core's claims equal the quote")
+		}
+		e.OnCoreAck(ack)
+		if got, want := claimsSent(t, db), []string{"BARE:0", "GONE:0", "MISSING:1", "STALE:1"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("published %v, want %v", got, want)
+		}
+		// The guard holds a repeat: the same answer again sends nothing.
+		e.OnCoreAck(ack)
+		if got := claimsSent(t, db); len(got) != 0 {
+			t.Errorf("the same answer again published %v, want each held back in flight", got)
+		}
+	})
 }
 
 // TestAnswerOwned_AFailedReadPublishesNothing: a process list that cannot be
@@ -544,7 +531,6 @@ func TestAnswerOwned_AFailedReadPublishesNothing(t *testing.T) {
 				t.Errorf("quote %v: the claims family should be quoted only once it has been read", quote)
 			}
 			held := map[string]string{"STALE": "0", "GONE": "1"}
-			e.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Claims: held})
 			e.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Owned: map[string]protocol.OwnedAnswer{
 				protocol.OwnedClaims: differs(held)}})
 			if got := claimsSent(t, db); len(got) != 0 {
@@ -581,7 +567,7 @@ func TestAnswerOwned_TheAbsenceRules(t *testing.T) {
 			seedStyledProcess(t, db, "ABS", 1)
 			e.sendDue(claimsGuardKey("ABS"), "older", "")
 			e.OwnedDigests()
-			e.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Owned: tc.answer, Claims: map[string]string{}})
+			e.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Owned: tc.answer})
 			if got := claimsSent(t, db); !reflect.DeepEqual(got, tc.want) && !(len(got) == 0 && len(tc.want) == 0) {
 				t.Errorf("published %v, want %v", got, tc.want)
 			}
@@ -688,5 +674,45 @@ func TestCells_ACounterSaveSendsTheCatalog(t *testing.T) {
 	if len(got) != 1 || len(got[0].Cells) != 1 || len(got[0].Cells[0].Processes) != 1 ||
 		got[0].Cells[0].Processes[0].TagName != "MES_Other.Prod_Counter_01" {
 		t.Errorf("after the counter save edge.cells sent %+v, want the re-pointed catalog once", got)
+	}
+}
+
+// TestOwned_ASavesPublishQuotedBackConverges: the report a save publishes
+// (PublishChanged, ClaimsReported) is a copy this Edge sent, so a Core quoting
+// it while the next save's is on its way is converging; a Core that took none
+// still flags on the third send.
+func TestOwned_ASavesPublishQuotedBackConverges(t *testing.T) {
+	t.Parallel()
+	for _, frozen := range []bool{false, true} {
+		t.Run(map[bool]string{false: "Core takes each", true: "Core takes none"}[frozen], func(t *testing.T) {
+			t.Parallel()
+			db := testEngineDB(t)
+			e, pub := claimsEngine(t, db)
+			pid := seedStyledProcess(t, db, "SAVES", 1)
+			n := 0
+			save := func() string {
+				n++
+				sid, err := db.CreateStyle(fmt.Sprintf("SAVES-X%d", n), "", pid)
+				testutil.MustNoErr(t, err, "create style")
+				seedProduceClaim(t, db, sid, "QA-N0", fmt.Sprintf("SYN-SAVES-%d", n))
+				testutil.MustNoErr(t, pub.PublishChanged(pid), "publish the save")
+				return drainClaimsReports(t, db)["SAVES"]
+			}
+			coreHolds := save()
+			for i := 0; i < 4; i++ {
+				took := save()
+				save() // published, not yet at Core when it answers
+				if !frozen {
+					coreHolds = took
+				}
+				e.OwnedDigests()
+				e.OnCoreAck(&protocol.EdgeHeartbeatAck{Feeds: map[string]string{}, Owned: map[string]protocol.OwnedAnswer{
+					protocol.OwnedClaims: differs(map[string]string{"SAVES": coreHolds})}})
+				drainClaimsReports(t, db)
+			}
+			if got := e.FeedFlags(); (len(got) > 0) != frozen {
+				t.Errorf("after four acks: flags %v, want flagged %v", got, frozen)
+			}
+		})
 	}
 }

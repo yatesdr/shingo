@@ -92,10 +92,8 @@ func TestArch_PileWritersAreKnown(t *testing.T) {
 	t.Parallel()
 	root := edgeRepoRoot(t)
 	allowed := map[string]bool{
-		filepath.Join("store", "lineside", "lineside.go"):      true, // Capture, Drain, DeleteByID, StrandProcess
-		filepath.Join("store", "processes", "processes.go"):    true, // Delete (engine sends the levels)
-		filepath.Join("store", "migrations.go"):                true, // collapseDuplicateProcessNodes
-		filepath.Join("store", "migrations_lineside_piles.go"): true, // the rebuild
+		filepath.Join("store", "lineside", "lineside.go"):   true, // Capture, Drain, DeleteByID, StrandProcess
+		filepath.Join("store", "processes", "processes.go"): true, // Delete (engine sends the levels)
 		// dev only: run on a stopped Edge's database; the boot resend sends every pile row
 		filepath.Join("cmd", "seedlineside", "main.go"): true,
 	}

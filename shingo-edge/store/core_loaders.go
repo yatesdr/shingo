@@ -112,8 +112,7 @@ type CoreLoaderPayload struct {
 // Four facts Core's loader wire carried are not cached: the loader's config
 // generation, each position's kind and window bin types, and the carrier mix.
 // Nothing on the Edge reads them. Edge v27 dropped the position kind column
-// and the two carrier-mix tables; core_loaders.config_gen stays, unwritten at
-// its default, because a rolled-back build's statements name it.
+// and the two carrier-mix tables, and v60 the loader's config generation.
 func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -138,7 +137,6 @@ func (db *DB) ReplaceCoreLoaders(loaders []protocol.LoaderInfo) error {
 			return fmt.Errorf("insert core_loader %s/%s: %w", l.LoaderKey, l.Role, err)
 		}
 		for _, p := range l.Positions {
-			// min_stock column left dormant (bin-count floor retired) — defaults to 0.
 			if _, err := tx.Exec(
 				`INSERT INTO core_loader_positions (loader_key, position_node, payload_code, home_kind, ordinal) VALUES (?,?,?,?,?)`,
 				l.LoaderKey, p.CoreNodeName, p.PayloadCode, p.HomeKind, p.Ordinal,

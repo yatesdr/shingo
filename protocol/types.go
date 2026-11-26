@@ -200,10 +200,8 @@ const (
 	// transaction that moves the bin (H.2), addressed to the claiming station
 	// and never broadcast (H.3, D9), never expiring and never dead-lettered
 	// (H.6). It is the Edge's only door for binding a carrier Core placed;
-	// order.delivered closes the order and binds nothing (H.5). An Edge too old
-	// to register the subject drops it through the SubjectRouter's
-	// unknown-subject path, which is why Core sends it only to a station whose
-	// schema says it can bind it (H.7) and keeps today's Bound for the rest.
+	// order.delivered closes the order and binds nothing (H.5). Every
+	// Edge at the floor registers it.
 	SubjectBinLanded = "transit.bin_landed" // Core -> Edge
 
 	// SubjectBinReturn — Core → Edge: what happened to the bin a cancelled
@@ -307,7 +305,7 @@ const (
 	// SubjectBinsWatch — Edge → Core: the Core node names this Edge's
 	// operator stations draw (BinWatchList). Core keeps the latest list per
 	// Edge in memory, quotes its digest on every heartbeat ack
-	// (EdgeHeartbeatAck.BinWatch), and answers each list with that Edge's
+	// (EdgeHeartbeatAck.Owned, OwnedBinWatch), and answers each list with that Edge's
 	// node-bins snapshot. Sent on the direct path: a lost list is healed by the
 	// next ack, which still quotes the old digest.
 	SubjectBinsWatch = "bins.watch"

@@ -23,6 +23,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"shingo/protocol"
@@ -67,6 +68,9 @@ type SourceabilityMonitor struct {
 	// change-only publish logic can be tested with a capturing stub; production
 	// wiring points it at SubjectSourcingState on the outbox.
 	publishFn func(station string, r protocol.SourcingStateReport)
+	// sentFn is told of each send before it goes (SetSentFunc). Atomic because
+	// the composition root sets it after Run has started.
+	sentFn atomic.Pointer[func(station string)]
 
 	mu lockcheck.Mutex[lockorder.SourceabilityMonitor]
 	// dirty is the set of (process, style) awaiting recompute; drained per window.
@@ -126,6 +130,23 @@ func (m *SourceabilityMonitor) broadcast(station string, report protocol.Sourcin
 	}
 }
 
+// SetSentFunc installs who is told of every report the monitor sends, by the
+// station it goes to or protocol.StationBroadcast: Core's feeds, which record
+// the copy so that a heartbeat quoting it is converging (messaging
+// CoreDataService.SourcingSent). fn is called outside the monitor's lock and
+// may read it back (StationReport).
+func (m *SourceabilityMonitor) SetSentFunc(fn func(station string)) { m.sentFn.Store(&fn) }
+
+// publish is every send of a report. The state it reports has landed and the
+// send has not, so what SetSentFunc's fn reads is what the send leaves the
+// station holding (pinned by TestSourcingFeed_AnEdgeApplyingEveryPushIsNotFlagged).
+func (m *SourceabilityMonitor) publish(station string, r protocol.SourcingStateReport) {
+	if fn := m.sentFn.Load(); fn != nil {
+		(*fn)(station)
+	}
+	m.publishFn(station, r)
+}
+
 // ── WHERE A VERDICT GOES ──────────────────────────────────────────────────
 //
 // Each Edge reads the sourcing verdicts of its OWN processes and nothing else
@@ -166,7 +187,7 @@ func (m *SourceabilityMonitor) publishDeltas(changed []sourceability.StyleState)
 	}
 	m.mu.Unlock()
 	for _, st := range order {
-		m.publishFn(st, toReport(byStation[st], false))
+		m.publish(st, toReport(byStation[st], false))
 	}
 }
 
@@ -180,7 +201,7 @@ func (m *SourceabilityMonitor) publishSnapshots(states []sourceability.StyleStat
 	if targets[protocol.StationBroadcast] {
 		// A snapshot "to every station" is the whole plant — the fallback, and
 		// what an unrouted removal asks for.
-		m.publishFn(protocol.StationBroadcast, toReport(states, true))
+		m.publish(protocol.StationBroadcast, toReport(states, true))
 		return
 	}
 	names := make([]string, 0, len(targets))
@@ -189,7 +210,7 @@ func (m *SourceabilityMonitor) publishSnapshots(states []sourceability.StyleStat
 	}
 	sort.Strings(names)
 	for _, st := range names {
-		m.publishFn(st, toReport(m.snapshotFor(st, states), true))
+		m.publish(st, toReport(m.snapshotFor(st, states), true))
 	}
 }
 

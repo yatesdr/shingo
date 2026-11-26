@@ -1,13 +1,13 @@
 ## Settings on Press A, two screens (Screen A, Unloader A) and POS_B1-POS_B4 on none: the screen lines
 -- sheet closed
--- Screen Screen A holds 11 positions · online · 30 s ago [Edit] [Open] ‹POS_A1› ‹POS_A2› ‹POS_A3› ‹POS_A4› ‹POS_A5› ‹POS_A6› ‹POS_A7› ‹POS_A8› ‹POS_A9› ‹POS_A10› ‹POS_A11›
--- Screen Unloader A holds 1 position · online · 30 s ago [Edit] [Open] ‹ULD_1›
+-- Operator screen 11 positions · online · 30 s ago Screen A [Rename] [Open the screen] ‹POS_A1› ‹POS_A2› ‹POS_A3› ‹POS_A4› ‹POS_A5› ‹POS_A6› ‹POS_A7› ‹POS_A8› ‹POS_A9› ‹POS_A10› ‹POS_A11›
+-- Operator screen 1 position · online · 30 s ago Unloader A [Rename] [Open the screen] ‹ULD_1›
 -- 4 positions on no screen: POS_B1, POS_B2, POS_B3, POS_B4 [Put them on Screen A] [Put them on Unloader A]
 
 ## …Put them on Unloader A, the second screen: the lines
 -- sheet closed
--- Screen Screen A holds 11 positions · online · 30 s ago [Edit] [Open] ‹POS_A1› ‹POS_A2› ‹POS_A3› ‹POS_A4› ‹POS_A5› ‹POS_A6› ‹POS_A7› ‹POS_A8› ‹POS_A9› ‹POS_A10› ‹POS_A11›
--- Screen Unloader A holds 5 positions · online · 30 s ago [Edit] [Open] ‹ULD_1› ‹POS_B1› ‹POS_B2› ‹POS_B3› ‹POS_B4›
+-- Operator screen 11 positions · online · 30 s ago Screen A [Rename] [Open the screen] ‹POS_A1› ‹POS_A2› ‹POS_A3› ‹POS_A4› ‹POS_A5› ‹POS_A6› ‹POS_A7› ‹POS_A8› ‹POS_A9› ‹POS_A10› ‹POS_A11›
+-- Operator screen 5 positions · online · 30 s ago Unloader A [Rename] [Open the screen] ‹ULD_1› ‹POS_B1› ‹POS_B2› ‹POS_B3› ‹POS_B4›
 -- The positions on no screen go on Unloader A when this is saved. [Put them on Screen A]
 
 ## …Put them on Unloader A, then Save (Unloader A's write takes POS_B1-POS_B4)

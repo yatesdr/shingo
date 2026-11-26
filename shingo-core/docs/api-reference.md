@@ -10,7 +10,7 @@ Base URL: `http://<host>:8083`
 
 <!-- generated: shingo-core/www/router.go routes -->
 
-248 routes (123 behind `requireAuth`, 7 registered only in a `sim` build), from `NewRouter` in `shingo-core/www/router.go`. **Auth**: `login` is behind `h.requireAuth` (a session cookie from `/login`); `public` needs none. Grouped by area: everything outside `/api` under *Pages and forms*, then one section per first path segment under `/api`; within a section, by path then method.
+249 routes (124 behind `requireAuth`, 7 registered only in a `sim` build), from `NewRouter` in `shingo-core/www/router.go`. **Auth**: `login` is behind `h.requireAuth` (a session cookie from `/login`); `public` needs none. Grouped by area: everything outside `/api` under *Pages and forms*, then one section per first path segment under `/api`; within a section, by path then method.
 
 ### Pages and forms
 
@@ -181,6 +181,7 @@ Base URL: `http://<host>:8083`
 | `POST` | `/api/edges/claim` | `apiEdgeClaim` | login |
 | `POST` | `/api/edges/enroll` | `apiEdgeEnroll` | login |
 | `POST` | `/api/edges/rebind` | `apiEdgeRebind` | login |
+| `POST` | `/api/edges/remove` | `apiEdgeRemove` | login |
 | `POST` | `/api/edges/rename` | `apiEdgeRename` | login |
 | `POST` | `/api/edges/reregister` | `apiEdgeReregister` | login |
 

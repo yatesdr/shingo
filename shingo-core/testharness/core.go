@@ -63,6 +63,7 @@ const (
 	HookPlantTimezone      Hook = "plant timezone"      // coreDataService.SetPlantTimezone
 	HookFaultWindow        Hook = "fault window"        // coreDataService.SetFaultWindow
 	HookEdgeFeedFlags      Hook = "edge feed flags"     // eng.SetEdgeFeedFlagsFunc
+	HookStationRemoved     Hook = "station removed"     // eng.SetStationRemovedFunc
 	HookContainmentChanged Hook = "containment changed" // eng.SetContainmentChangedFunc
 	HookFeedsChanged       Hook = "feeds changed"       // eng.SetFeedsChangedFunc
 	HookCatalogRow         Hook = "catalog row"         // eng.SetCatalogRowFunc
@@ -221,6 +222,7 @@ func setHooks(eng *engine.Engine, coreDataService *messaging.CoreDataService, cf
 	if o.on(HookSourcingReport) {
 		if sm := eng.SourceabilityMonitor(); sm != nil {
 			coreDataService.SetSourcingReport(sm.StationReport)
+			sm.SetSentFunc(coreDataService.SourcingSent)
 		}
 	}
 	if o.on(HookPlantTimezone) {
@@ -231,6 +233,9 @@ func setHooks(eng *engine.Engine, coreDataService *messaging.CoreDataService, cf
 	}
 	if o.on(HookEdgeFeedFlags) {
 		eng.SetEdgeFeedFlagsFunc(coreDataService.EdgeFeedFlags)
+	}
+	if o.on(HookStationRemoved) {
+		eng.SetStationRemovedFunc(coreDataService.StationRemoved)
 	}
 	if o.on(HookContainmentChanged) {
 		eng.SetContainmentChangedFunc(coreDataService.ContainmentChanged)

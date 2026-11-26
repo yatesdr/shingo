@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"slices"
 	"testing"
 	"time"
@@ -50,7 +51,7 @@ func TestRobotWatches_LeaseRunsFifteenSecondsFromTheLastWatch(t *testing.T) {
 
 // TestHandleRobotWatch_KeysOnTheEnvelopesStation pins the watch door: the
 // lease is the envelope's source station, its uuids sorted and each once; the
-// body's station_id is not read, so a body naming another station renews the
+// body's station_id (a v0.19.0 Edge's) is not read, so a body naming another station renews the
 // sender's lease; a watch with no envelope station is dropped.
 func TestHandleRobotWatch_KeysOnTheEnvelopesStation(t *testing.T) {
 	t.Parallel()
@@ -58,7 +59,7 @@ func TestHandleRobotWatch_KeysOnTheEnvelopesStation(t *testing.T) {
 	from := func(station string) *protocol.Envelope {
 		return &protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: station}}
 	}
-	e.HandleRobotWatch(from("edge.a"), &protocol.RobotWatch{StationID: "edge.a", OrderUUIDs: []string{"u-2", "u-1", "u-2"}})
+	e.HandleRobotWatch(from("edge.a"), &protocol.RobotWatch{OrderUUIDs: []string{"u-2", "u-1", "u-2"}})
 	e.HandleRobotWatch(from(""), &protocol.RobotWatch{OrderUUIDs: []string{"u-8"}})
 
 	got := e.robotWatches.live(time.Now())
@@ -66,7 +67,11 @@ func TestHandleRobotWatch_KeysOnTheEnvelopesStation(t *testing.T) {
 		t.Fatalf("live = %+v, want edge.a alone watching [u-1 u-2]", got)
 	}
 
-	e.HandleRobotWatch(from("edge.a"), &protocol.RobotWatch{StationID: "edge.b", OrderUUIDs: []string{"u-9"}})
+	var named protocol.RobotWatch
+	if err := json.Unmarshal([]byte(`{"station_id":"edge.b","order_uuids":["u-9"]}`), &named); err != nil {
+		t.Fatal(err)
+	}
+	e.HandleRobotWatch(from("edge.a"), &named)
 	got = e.robotWatches.live(time.Now())
 	if len(got) != 1 || got[0].station != "edge.a" || !slices.Equal(got[0].uuids, []string{"u-9"}) {
 		t.Fatalf("after a watch from edge.a whose body names edge.b: live = %+v, want edge.a alone watching [u-9]", got)
@@ -108,13 +113,13 @@ func TestRobotWatches_ANewOrChangedWatchAsksForAnAnswer(t *testing.T) {
 
 	e := &Engine{robotWatchAsked: make(chan struct{}, 1)}
 	from := &protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: "edge.a"}}
-	e.HandleRobotWatch(from, &protocol.RobotWatch{StationID: "edge.a", OrderUUIDs: []string{"u-1"}})
+	e.HandleRobotWatch(from, &protocol.RobotWatch{OrderUUIDs: []string{"u-1"}})
 	select {
 	case <-e.robotWatchAsked:
 	default:
 		t.Fatal("a first watch did not wake the poll")
 	}
-	e.HandleRobotWatch(from, &protocol.RobotWatch{StationID: "edge.a", OrderUUIDs: []string{"u-1"}})
+	e.HandleRobotWatch(from, &protocol.RobotWatch{OrderUUIDs: []string{"u-1"}})
 	select {
 	case <-e.robotWatchAsked:
 		t.Error("a resend woke the poll")

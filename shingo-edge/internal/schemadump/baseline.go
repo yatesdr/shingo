@@ -29,7 +29,7 @@ var Vintages = []Vintage{
 	{
 		Rev: "71d1d149",
 		Why: "the far side of the 2026-07-25 v33 style_node_claims rebuild (2026-08-22) — a " +
-			"database of this vintage takes rebuildStyleNodeClaims' early return, so it is " +
+			"database of this vintage took that rebuild's early return, so it was " +
 			"the only vintage that can see a column addition that lives inside the rebuild",
 	},
 	{

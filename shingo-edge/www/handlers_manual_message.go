@@ -92,10 +92,10 @@ func (h *Handlers) apiSendManualMessage(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		// The schema version is this Edge's, the heartbeater's register's read
-		// (engine Engine.SchemaVersion). Core keeps the last register's and
-		// sends a station below protocol.EdgeSchemaBinLanded a Bound in place
-		// of a landing, so a register without it (v0) demoted the station until
-		// its next real register. PIN:
+		// (engine Engine.SchemaVersion). Core keeps the last register's: /edges
+		// shows it, and a v0.19.0 Core sends a station below v20 a Bound in
+		// place of a landing, so a register without it (v0) demoted the
+		// station until its next real register. PIN:
 		// TestApiSendManualMessage_EdgeRegister_CarriesTheEdgesSchemaVersion,
 		// TestScenario_TheDebugPagesRegisterKeepsTheStationsLandings.
 		sv, ok := h.orchestration.(interface{ SchemaVersion() int })
@@ -108,7 +108,6 @@ func (h *Handlers) apiSendManualMessage(w http.ResponseWriter, r *http.Request) 
 		// process claiming the station, and stamping the real instance here
 		// would let a click move the binding lease.
 		env, err = protocol.NewDataEnvelope(protocol.SubjectEdgeRegister, src, dst, &protocol.EdgeRegister{
-			StationID:     stationID,
 			Hostname:      hostname,
 			Version:       p.Version,
 			SchemaVersion: sv.SchemaVersion(),
