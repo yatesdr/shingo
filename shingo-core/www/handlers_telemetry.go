@@ -313,7 +313,7 @@ func (d *Doors) binClear(req protocol.BinClearRequest) asks.Result {
 	if refusal != nil {
 		return *refusal
 	}
-	if refusal := d.stagedCartRefusal(req.NodeName, bin); refusal != nil {
+	if refusal := d.robotComingRefusal(req.NodeName, bin); refusal != nil {
 		return *refusal
 	}
 
@@ -398,31 +398,81 @@ func (d *Doors) binClear(req protocol.BinClearRequest) asks.Result {
 	})
 }
 
-// stagedCartRefusal refuses the CLEAR of a cart whose claimant's robot is
-// staged at the node to lift it next (stagedToLiftAt), nil otherwise: the
-// clear would zero the cart under the robot, and the order would then carry an
-// empty to its line. The owner's ruling (brief H H3, 2026-11-25): "a robot
-// staging should not invite loader interaction"; the case was a line's
-// two-robot supply staged at a loader home under the cart it has claimed, and
-// the loader board's CLEAR BIN on that home. Every other cart clears as it did
-// before the ruling: one a live order has claimed whose robot is not staged
-// there (on its way, or staged elsewhere), one a queued order has only
-// reserved, and one whose claimant cannot be read (it cannot be shown staged).
-// Those are left for a ruling. Read outside the clear's transaction, as the
-// bin_id check is, so a robot that stages between this read and the clear is
-// not refused. Pinned by TestBinClearDoor_Arms and, across the two modules,
-// by TestScenario_TwoRobotLine_ThroughItsHome_LoaderCardWhileStaged.
-func (d *Doors) stagedCartRefusal(nodeName string, bin *domain.Bin) *asks.Result {
+// robotComingRefusal refuses the CLEAR of a cart a robot is coming for, nil
+// otherwise: the clear would zero the cart, and the order would then carry it
+// on empty. Coming for it: the cart's claimant is an order the fleet
+// holds (protocol.IsVendorTracked: dispatched, which is the fleet's yes, then
+// in transit, staged or faulted) whose plan lifts it here (liftsHere). A lift
+// takes the cart off the node, so a cart still standing here is not yet lifted.
+// Two sentences, one for a robot staged at this node to lift it next
+// (stagedToLiftAt; brief H H3, 2026-11-25: "a robot staging should not invite
+// loader interaction") and one for any other, on its way or staged elsewhere
+// (brief I I1, the owner 2026-11-25 18:02: "shouldnt it not allow a clear
+// because active in transit order?"). Each names where the order sets the
+// cart down (cartGoesTo).
+//
+// Every other cart clears as before: one its claimant set down here and does
+// not lift again (an index press's Robot 1 leaves the press's cart at its
+// outbound, an unloader's window, and goes on for the refill, still claiming
+// it: the unloader's CLEAR of it is its ordinary step); one claimed while Core
+// asks the fleet (the hand's claim, before the fleet's yes); one a queued order
+// has only reserved (no claim; the kanban rig's walk clears one); one whose
+// claim an ended order left; one whose claimant cannot be read. Read outside
+// the clear's transaction, as the bin_id check is, so a robot sent between
+// this read and the clear is not refused. A cart nobody claims costs this no
+// statement; a claimed one, its claimant's read (the carts ride it). Pinned by
+// TestBinClearDoor_Arms and, across the two modules, by
+// TestScenario_TwoRobotLine_ThroughItsHome_LoaderCardWhileStaged.
+func (d *Doors) robotComingRefusal(nodeName string, bin *domain.Bin) *asks.Result {
 	if bin.ClaimedBy == nil {
 		return nil
 	}
 	claimant, err := d.engine.OrderService().GetOrder(*bin.ClaimedBy)
-	if err != nil || !stagedToLiftAt(claimant, nodeName) {
+	if err != nil || !claimant.Status.IsVendorTracked() || !liftsHere(claimant, nodeName) {
 		return nil
 	}
-	res := d.refuseAt(nodeName, http.StatusConflict, fmt.Sprintf(
-		"Not cleared: a robot is staged at %s to take %s to %s.", nodeName, bin.Label, claimant.DeliveryNode))
+	to := cartGoesTo(claimant, bin.ID)
+	sentence := fmt.Sprintf("Not cleared: a robot is on its way to take %s to %s.", bin.Label, to)
+	if stagedToLiftAt(claimant, nodeName) {
+		sentence = fmt.Sprintf("Not cleared: a robot is staged at %s to take %s to %s.", nodeName, bin.Label, to)
+	}
+	res := d.refuseAt(nodeName, http.StatusConflict, sentence)
 	return &res
+}
+
+// liftsHere reports whether o's plan lifts a cart at node: a pickup step there.
+// An order with no stored plan (a plain move or retrieve, whose source may name
+// a group, or nothing, until the pick) lifts the one cart it holds and sets
+// nothing down before its drop, which hands the claim back: it lifts it.
+func liftsHere(o *domain.Order, node string) bool {
+	steps, planned := domain.PlanSteps(o.StepsJSON)
+	if !planned {
+		return true
+	}
+	for _, s := range steps {
+		if s.Action == protocol.ActionPickup && s.Node == node {
+			return true
+		}
+	}
+	return false
+}
+
+// cartGoesTo is where o sets the cart binID down last: the drop of its last
+// lift among o's carts, else o's delivery node (carts that name no set-down for
+// it). A complex order's delivery node is its plan's last stop, which is not
+// this cart's when it carries more than one: a single-robot swap ends at the
+// old cart's destination.
+func cartGoesTo(o *domain.Order, binID int64) string {
+	to, last := o.DeliveryNode, -1
+	for _, c := range o.Carts {
+		if c.BinID != binID || c.PickStep == nil || c.DropStep == nil || *c.PickStep < last {
+			continue
+		}
+		if node := domain.StepNode(o, *c.DropStep); node != "" {
+			to, last = node, *c.PickStep
+		}
+	}
+	return to
 }
 
 // stagedToLiftAt reports whether o's robot stands staged at node to lift the
