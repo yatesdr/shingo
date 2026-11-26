@@ -28,8 +28,12 @@ const (
 // migration that adds a style_node_claims column adds the same column to
 // style_node_claims_quarantine (TestClaimQuarantine_MirrorsEveryClaimColumn).
 //
-// There is no down step: protocol/migrate has none, and a migration here
-// leaves the previous release able to run on what it leaves.
+// There is no down step: protocol/migrate has none, and a start refuses a
+// database newer than its build (shingo-edge/store/boot_check.go:81), so an
+// Edge rolled back across a migration here needs the database the installer
+// backed up before it (install-edge.sh, THE ROLLBACK SLOT). RetiredChainRelease
+// predates that refusal and runs on what this build leaves
+// (TestRetiredChainReleaseRunsOnThisSchema).
 func edgeMigrations() []migrate.Migration {
 	return []migrate.Migration{
 		{Version: 60, Name: "converge_and_drop_dead_columns", Fn: v60Up, Verify: v60Verify},

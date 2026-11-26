@@ -852,11 +852,13 @@ done
 # same build lose the release it replaced (the slot became the new build, and
 # the mv above put the new build back). Otherwise the live binary goes into the
 # slot, copied to a temp name and renamed, so a failed copy leaves the old slot.
-# A fresh install (no live binary) writes none. The Edge has no down step, so,
-# unlike Core's, the slot needs no record: each Edge migration leaves the
-# release before it able to run. For a release older than the slot's: the
+# A fresh install (no live binary) writes none. The Edge has no down step, and
+# a start refuses a database newer than its build
+# (shingo-edge/store/boot_check.go:81), so the slot alone rolls back only an
+# install that applied no Edge migration. A rollback across one restores the
 # backup in /var/backups/shingo-edge/shingo-pre-install-*.tar.gz (config + DB,
-# root's alone) plus a checkout of that release's tag and a reinstall.
+# root's alone) with the slot. For a release older than the slot's: that backup
+# plus a checkout of that release's tag and a reinstall.
 if [ -f /opt/shingo/shingoedge ]; then
     NEW_SHA=$(sha256sum /tmp/shingoedge 2>/dev/null | cut -d' ' -f1 || true)
     LIVE_SHA=$(sha256sum /opt/shingo/shingoedge 2>/dev/null | cut -d' ' -f1 || true)
