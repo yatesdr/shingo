@@ -2346,32 +2346,19 @@ function drawPicture(pass) {
     // svg takes the picture's own width and .pd-pic scrolls it sideways.
     const pw = Math.round(o.width || w);
 
-    // AN UNCHANGED PICTURE IS NOT REDRAWN, and that is what stops the pulse.
-    //
-    // Selecting a style draws the picture, and 400 ms later the preview lands
-    // and draws it AGAIN — `applyPreview` only sets model.preview, so the
-    // cells, the geometry and almost always the findings are identical and the
-    // second render produces the same bytes. Assigning them anyway replaces
-    // every node in the SVG, which the browser repaints: on the floor that
-    // reads as the picture flashing and re-fitting on every click, twice per
-    // style. The same happens on every resize event.
-    //
-    // So the render is idempotent at the DOM: build the markup, compare, and
-    // only write when it actually differs. A preview that DOES bring a finding
-    // still redraws — once, because it changed something.
-    // THE CACHE BELONGS TO THE ELEMENT, NOT TO THE PAGE, and holding it on S
-    // was a blank picture waiting to happen — which is what it did.
-    //
-    // drawFlows rebuilds the whole tab, so the #pd-svg that drawPicture writes
-    // into is a BRAND NEW, EMPTY element. Selecting a card the page already has
-    // selected redraws the tab and produces the same markup as last time, so a
-    // cache kept on S said "unchanged, skip" and left the new element empty:
-    // click a position once and it outlines, click it again and the picture
-    // vanishes. Reported from the floor as "clicked again, whole screen blank".
-    //
-    // Hung off the node, a fresh element simply has no cache and is always
-    // written; only a redraw of the SAME element with the same bytes is
-    // skipped, which is the case this is for.
+    // AN UNCHANGED PICTURE IS NOT REDRAWN, and that is what stops the pulse:
+    // the preview lands 400 ms after a style is selected and draws the same
+    // bytes again (so does every resize), and replacing every node in the SVG
+    // repaints it, which on the floor reads as the picture flashing. So the
+    // render is idempotent at the DOM: build the markup, compare, and write only
+    // when it differs. A preview that DOES bring a finding still redraws, once.
+    // THE CACHE BELONGS TO THE ELEMENT, NOT TO THE PAGE: drawFlows rebuilds the
+    // whole tab, so the #pd-svg drawPicture writes into is a new, empty element,
+    // and a cache kept on S skipped it and left the picture blank. Hung off the
+    // node, a fresh element has no cache and is always written; only a redraw of
+    // the SAME element with the same bytes is skipped. History: "fix(edge): what
+    // the floor found on day one", "fix(edge): the picture stops zooming out and
+    // snapping back".
     const viewBox = '0 0 ' + pw + ' ' + h;
     if (svg.getAttribute('viewBox') !== viewBox) {
         svg.setAttribute('viewBox', viewBox);
@@ -3943,13 +3930,10 @@ function partnerChoices(node) {
 //   - node's Sequential partner is paired back (unless its draft keeps it as it
 //     is: rows.pair answers false), and the row that partner named before, if
 //     it named the partner back, is unpaired.
-// Before, only First style paired back, and nothing unpaired: a partner picked
-// again, or a swap with none, left the old partner naming the press, and the
-// Styles table paired one way only. rows.of answers null for a position that
-// is not a row of the draft (a back of the map): it names nobody and is never
-// paired back, so an Index Swap's back stays firstPartnered's. Pinned by
-// cold-start.txt's "a partner picked again" and table-bugs.txt's "Partner
-// picked again" and "Partner cleared".
+// rows.of answers null for a position that is not a row of the draft (a back
+// of the map): it names nobody and is never paired back, so an Index Swap's
+// back stays firstPartnered's. Pinned by cold-start.txt's "a partner picked
+// again" and table-bugs.txt's "Partner picked again" and "Partner cleared".
 function pairPartner(rows, node) {
     const names = n => { const r = rows.of(n); return r && r.mode === 'sequential' ? r.paired || '' : ''; };
     const to = names(node);
@@ -4080,14 +4064,11 @@ function optionsFor(node, kind) {
             if (!chip) return [];
             // A PAIR IS THIS SCREEN'S OR NO SCREEN'S (B4): another station's
             // position (an unloader's window) is never a press row's pair.
-            // A PARTNER IS A POSITION; STAGING IS A ROUTING ROLE. These four
-            // keys used to share one list — the back positions plus every
-            // other position of this process — and for `paired` and
-            // `secondPaired` that is right: a press pairs with its own slots.
-            // For `staging` and `parkOld` it offered a line's other positions,
-            // none a staging node, where the station's composer (since torn
-            // out, 681a912c) offered the routing set's staging rows plus the
-            // backs: one field, two answers by screen.
+            // A PARTNER IS A POSITION; STAGING IS A ROUTING ROLE. `paired` and
+            // `secondPaired` offer this process's positions (a press pairs with its own
+            // slots); `staging` and `parkOld` offer the routing set's staging rows plus
+            // the backs, as the station's composer did. History: "fix(edge): what the
+            // floor found on day one".
             //
             // The back positions stay in the list because a press that parks
             // on its own back slot has staging without a routing row — the
@@ -4237,20 +4218,12 @@ function pickerEmptyWord(kind) {
 // placePopover puts a popover under the control that opened it — or over it,
 // and never off the bottom of the screen.
 //
-// EVERY POPOVER ON THIS PAGE DID THIS ITSELF, seven times, and all seven did
-// the same two things: clamp `left` into the host, and set `top` to the
-// anchor's bottom. None of them looked at how much room was actually below.
-// `.pd-pop` is 320 px tall at most and the app shell is `height: 100vh;
-// overflow: hidden` — so a picker opened from a row near the foot of the page
-// ran off the bottom with no way to reach the rest, and the only way to read
-// your own options was to zoom the browser out or make the window taller.
-// Reported from the floor on the inbound source, outbound destination and
-// staging pickers, which are the ones lowest on the positions table.
-//
-// The rule is the one the station's composer had (its popover, torn out with
-// it in 681a912c): measure the room above and below the anchor in the VIEWPORT, open
-// on the side with room, and cap the height to what is there so the list
-// scrolls inside the screen rather than past it.
+// The rule, for every popover here: measure the room above and below the
+// anchor in the VIEWPORT, open on the side with room, and cap the height to
+// what is there, so the list scrolls inside the screen rather than past it
+// (`.pd-pop` is 320 px at most and the shell is `height: 100vh; overflow:
+// hidden`). History: "fix(edge): the map draws the whole routing set, and the
+// pickers fit on screen".
 // `min` is the least room worth opening into; the part popover asks for more
 // than a short option list does, because it carries a search and two lists.
 function placePopover(pop, btn, min) {
@@ -7949,13 +7922,10 @@ async function refreshStationNodes(stationID) {
 
 // ── one scrim, the edge's own ─────────────────────────────────────
 //
-// #pd-scrim IS a .modal-overlay. It was a second one: .pd-scrim's rule was
-// position:fixed/inset:0/var(--scrim)/flex-centre/var(--z-modal), which is
-// .modal-overlay's rule with a different name and a different switch (the
-// hidden attribute instead of .active). Two names for one backdrop is two
-// things to keep in step, and they had already diverged — every other modal on
-// this edge locks the body's scroll while it is open and this one did not, so
-// the page behind an open sheet scrolled under it.
+// #pd-scrim IS a .modal-overlay, not a second backdrop rule beside it: two
+// names for one backdrop had diverged (this one never locked the page's
+// scroll). History: "feat(edge): the Processes page is the engineer's half of
+// the composer".
 //
 // IT IS AN ENTRY ON THE ONE OVERLAY STACK (shared/layer.js). The two sheets
 // that draw their own whole markup here, Advanced and the apply modal, open it
@@ -7969,12 +7939,9 @@ async function refreshStationNodes(stationID) {
 // is rebuilt from scratch on every open and thrown away on close, so the walk
 // would be work done on fields about to stop existing.
 //
-// ONE OPEN AND ONE CLOSE. There were four of the first and three of the
-// second — Advanced, the sheets and the apply modal each did their
-// own `scrim.hidden = false`, so a fix to what opening means had four places
-// to land in and reached whichever the author remembered. showSheet returns
-// the scrim's layer handle; opening it again (a redraw) returns the same one.
-// onClose runs however it closed (Cancel, Escape, the backdrop, Discard).
+// ONE OPEN AND ONE CLOSE, here: showSheet returns the scrim's layer handle,
+// and opening it again (a redraw) returns the same one. onClose runs however
+// it closed (Cancel, Escape, the backdrop, Discard).
 function showSheet(html, onClose) {
     const scrim = $('pd-scrim');
     if (!scrim) return null;
@@ -8260,16 +8227,11 @@ function bindPickers() {
 // that sheetField draws, so every field fits every sheet and no sheet picks a
 // width of its own.
 //
-// WHAT THE LAYER ANSWERS FOR, and this page no longer does: one run per press
-// (OK is off while the run is out and back on in a finally, whatever the run
-// did, so a chain refused halfway is pressed again and a write that never
-// answers cannot hold "Saving…"); Escape innermost first, a popover before
-// its sheet; a backdrop click as Escape (ruling 2: these sheets opt in, and a
-// press that began in the card never closes it); asking before Escape or the
-// backdrop throws typed work away, the question being a confirm on the stack
-// whose Escape is Keep editing (and the sheet under it is never redrawn, so
-// keeping is keeping); the counted scroll lock; focus into the sheet and back
-// to what opened it.
+// WHAT THE LAYER ANSWERS FOR, and this page no longer does (shared/layer.js):
+// one run per press (OK is off while it is out, so a write that never answers
+// cannot hold "Saving…"); Escape innermost first; a backdrop click as Escape
+// (ruling 2: these sheets opt in); asking before typed work is thrown away;
+// the counted scroll lock; focus into the sheet and back to what opened it.
 //
 // ONE SHEET AT A TIME, as the one scrim had it: a sheet opened over another
 // takes its place ('replaced') rather than stacking on it. opener, when given,
@@ -9033,16 +8995,11 @@ function openNewGroup() {
 // the press already has, in the draft, and nothing is written until Save style.
 // One free position is the whole decision, so it is made without a dialog;
 // more than one and the engineer says which.
-// THE MODE COMES WITH IT, because on this screen a cell without one does not
-// exist. reduce's addPosition leaves `mode` null unless the action carries one,
-// and positionsTable draws a row only for `on && mode` — so "+ Add a position"
-// turned the cell on, drew nothing, left the name in the free list, and turned
-// the bar red naming a position that was nowhere on screen with "tap the
-// position and pick a choreography" against a row that did not exist. Save was
-// disabled by the finding, so the only way out was Discard.
-//
-// The desktop's editor IS the row. So the row arrives with a mode and the
-// engineer changes it from the row's own swap-mode picker.
+// THE MODE COMES WITH IT: reduce's addPosition leaves `mode` null unless the
+// action carries one, and positionsTable draws a row only for `on && mode`, so
+// a cell added without one is on and drawn nowhere. The desktop's editor IS the
+// row; the engineer changes the mode from the row's own swap-mode picker.
+// History: "fix(edge): the audit's criticals".
 //
 // WHICH MODE: the one this flow already uses. A press runs one choreography
 // on almost every position, so the common case is right and the odd one out is
@@ -9050,11 +9007,8 @@ function openNewGroup() {
 // rows have one; a draft whose rows were all taken off is not bound to it.
 //
 // A FLOW WITH NO ROWS HAS NONE TO BORROW, and there is no default (pick-a-part
-// U2): the fallback was the first key of the mode table,
-// `two_robot_press_index`, which put a press-index row on a weld cell. So the
-// engineer is asked — the row picker's own list of choreographies, then the
-// position. It used to answer with a notice sending them to a recipe instead,
-// which left a style with no rows no way to gain its first from this screen.
+// U2), so the engineer is asked: the row picker's own list of choreographies,
+// then the position.
 function defaultModeFor() {
     const seen = {};
     for (const n of Object.keys(S.model.cells)) {
@@ -10450,20 +10404,14 @@ function drawPresetApply() {
 // style's own flow and the preset's shape; the order count and any refusal are
 // the server's, from the same flow/preview the Flows tab uses.
 //
-// THE ROW KEEPS ITS MODEL (owner ruling F1). It used to build one, read the
-// cells off it and throw it away, which was enough while the modal could only
-// ever show what an apply WOULD do. It finishes the job now — a pick writes to
-// this model and the row previews again — so the state the modal edits is a
-// composer model like any other, and `applyPreset` then `setPart` comes out the
-// same as a hand-placed cell.
-// THE TICK IS A TOGGLE; RE-PREVIEWING IS NOT. They were one function, and the
-// 409 retry called it on a row that is ticked by definition (applyRowReady
-// requires it) — so the retry's first act was to DELETE the row it was about
-// to rebuild. Everything after that read undefined: the fresh row was missing,
-// the else arm recorded a failure, and the refusal was written onto an object
-// no longer in S.papply.rows, where nothing renders it. On a 409 the row's tick
-// silently cleared itself and the footer said "1 to look at" with no row
-// saying which or why — and the retry the code advertises never happened.
+// THE ROW KEEPS ITS MODEL (owner ruling F1): a pick writes to this model and
+// the row previews again, so the state the modal edits is a composer model
+// like any other, and `applyPreset` then `setPart` comes out the same as a
+// hand-placed cell.
+// THE TICK IS A TOGGLE; RE-PREVIEWING IS NOT. The 409 retry re-previews a row
+// that is ticked by definition (applyRowReady requires it); as one function
+// it deleted the row it was about to rebuild. History: "feat(edge): Edit
+// process, and the desktop half of the audit list".
 async function tickApplyRow(styleID) {
     const r = S.papply.rows[styleID] || {};
     if (r.ticked) { delete S.papply.rows[styleID]; drawPresetApply(); return; }
